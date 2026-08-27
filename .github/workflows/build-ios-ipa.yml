@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["mobile/**"]
+    paths: ["mobile/**", ".github/workflows/build-ios-ipa.yml"]
 
 defaults:
   run:
