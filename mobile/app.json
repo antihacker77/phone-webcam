@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Phone Webcam",
+    "slug": "phone-webcam",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.example.phonewebcam",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Your camera is streamed to the paired PC app.",
+        "NSMicrophoneUsageDescription": "Only used if you enable audio streaming."
+      }
+    },
+    "plugins": [
+      "expo-dev-client",
+      "@config-plugins/react-native-webrtc"
+    ]
+  }
+}

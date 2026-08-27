@@ -1,0 +1,22 @@
+# contains live secrets (SHARED_SECRET, TURN password) — keep local only
+DEPLOYMENT_STATUS.md
+
+# server (Node)
+server/node_modules/
+server/.env
+
+# pc-app (Python)
+pc-app/.venv/
+pc-app/__pycache__/
+pc-app/dist/
+pc-app/dist_installer/
+pc-app/build/
+pc-app/*.spec.bak
+
+# mobile (Expo/React Native)
+mobile/node_modules/
+mobile/.expo/
+mobile/ios/
+mobile/android/
+mobile/dist/
+mobile/*.log

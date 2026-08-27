@@ -1,0 +1,19 @@
+services:
+  signaling:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - SHARED_SECRET=${SHARED_SECRET}
+    ports:
+      # bound to loopback only — the existing cloudflared tunnel on the host
+      # reaches it via http://localhost:8080, it's never exposed externally
+      - "127.0.0.1:8080:8080"
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
