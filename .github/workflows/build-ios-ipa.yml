@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths: ["mobile/**"]
+
+defaults:
+  run:
+    working-directory: mobile
 
 jobs:
   build:
@@ -61,4 +66,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: app-unsigned-ipa
-          path: app-unsigned.ipa
+          path: mobile/app-unsigned.ipa
