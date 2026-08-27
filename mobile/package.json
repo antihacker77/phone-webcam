@@ -17,7 +17,7 @@
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-webrtc": "^124.0.8",
-    "@config-plugins/react-native-webrtc": "^11.0.0"
+    "@config-plugins/react-native-webrtc": "^15.0.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
