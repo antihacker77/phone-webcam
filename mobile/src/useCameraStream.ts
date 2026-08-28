@@ -14,6 +14,10 @@ export type Status =
   | 'ended'
   | 'error';
 
+export type Resolution = { width: number; height: number };
+
+export const DEFAULT_RESOLUTION: Resolution = { width: 1920, height: 1080 };
+
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise((resolve) => {
@@ -47,7 +51,7 @@ export function useCameraStream() {
   }, [localStream]);
 
   const connect = useCallback(
-    async (serverUrl: string, roomCode: string) => {
+    async (serverUrl: string, roomCode: string, resolution: Resolution = DEFAULT_RESOLUTION) => {
       setErrorMessage(null);
       setStatus('connecting');
 
@@ -55,7 +59,11 @@ export function useCameraStream() {
       try {
         stream = (await mediaDevices.getUserMedia({
           audio: true,
-          video: { facingMode },
+          video: {
+            facingMode,
+            width: { ideal: resolution.width },
+            height: { ideal: resolution.height },
+          },
         })) as MediaStream;
       } catch (err: any) {
         setStatus('error');
