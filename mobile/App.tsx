@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useEffect, useState } from 'react';
 import {
   Pressable,
@@ -31,6 +32,7 @@ function parseQrPayload(data: string): QrPayload | null {
 }
 
 export default function App() {
+  useKeepAwake();
   const [serverUrl, setServerUrl] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [showManualEntry, setShowManualEntry] = useState(false);
