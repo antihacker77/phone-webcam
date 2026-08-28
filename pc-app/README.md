@@ -19,8 +19,9 @@ selectable in Zoom/Teams/Discord/OBS/etc.
 python main.py
 ```
 
-A window shows the PC's local address (`ws://192.168.x.x:8765`) and a
-6-digit room code — enter both in the mobile app. The PC and phone must be
+A window shows a QR code — scan it from the mobile app to connect (its
+address `ws://192.168.x.x:8765` and 6-digit room code are also shown as
+text, for manual entry if scanning isn't possible). The PC and phone must be
 on the **same Wi-Fi network**. Once the phone connects, "Phone Webcam"
 becomes available as a camera source in any app (you may need to reopen the
 other app's camera picker). If Windows Firewall prompts on first run, allow

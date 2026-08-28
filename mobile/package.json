@@ -9,15 +9,16 @@
     "ios": "expo run:ios"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^15.0.0",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "expo": "~57.0.15",
+    "expo-camera": "~57.0.4",
     "expo-dev-client": "~57.0.14",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-webrtc": "^124.0.8",
-    "@config-plugins/react-native-webrtc": "^15.0.0"
+    "react-native-webrtc": "^124.0.8"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

@@ -21,10 +21,10 @@ iPhone (Expo app) ──────────── same Wi-Fi ────�
 
 ## Using it
 
-1. Run the PC app — it shows its local address (`ws://192.168.x.x:8765`) and
-   a 6-digit room code.
-2. Open the phone app (same Wi-Fi network!), enter that address and code,
-   tap Connect.
+1. Run the PC app — it shows a QR code (plus its local address
+   `ws://192.168.x.x:8765` and a 6-digit room code as text, for manual entry).
+2. Open the phone app (same Wi-Fi network!) and tap "Scan QR to connect",
+   pointing the camera at the PC's QR code.
 3. "Phone Webcam" appears as a virtual camera on the PC, selectable in
    Zoom/Teams/OBS/Discord/etc.
 

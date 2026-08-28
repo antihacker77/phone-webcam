@@ -3,3 +3,4 @@ pyvirtualcam>=0.11
 websockets>=12.0
 av>=11.0
 numpy>=1.26
+qrcode[pil]>=7.4

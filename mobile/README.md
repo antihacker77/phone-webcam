@@ -33,9 +33,12 @@ whatever process you already use for `my-app`.
 ## Using the app
 
 1. Make sure the phone and the PC are on the **same Wi-Fi network**.
-2. Start the PC app first — it shows its address (`ws://192.168.x.x:8765`)
-   and a 6-digit room code.
-3. Open this app, type in that address and room code, tap **Connect**.
+2. Start the PC app first — it shows a QR code (and, as a fallback, its
+   address `ws://192.168.x.x:8765` and a 6-digit room code as text).
+3. Open this app and tap **Scan QR to connect**, then point the camera at
+   the QR code on the PC screen — it connects automatically. If scanning
+   isn't possible, tap **Enter address manually** and type in the address
+   and code shown on the PC instead.
 4. Once paired, the PC app's "Phone Webcam" virtual camera goes live.
 5. **Flip camera** toggles front/back; **Disconnect** ends the session (the
-   PC app will show a fresh room code for the next connection).
+   PC app will show a fresh QR code/room code for the next connection).
