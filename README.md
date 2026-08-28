@@ -8,8 +8,8 @@ server, account, or internet connection required.
 iPhone (Expo app) ──────────── same Wi-Fi ────────────▶ Windows PC (Python app)
  captures camera, connects        WebRTC P2P              runs its own local
  to the PC's local address                                signaling server,
- with the room code                                       feeds "Phone Webcam"
-                                                            virtual camera device
+ with the room code                                       feeds "OBS Virtual
+                                                            Camera" device
 ```
 
 ## Parts
@@ -25,8 +25,9 @@ iPhone (Expo app) ──────────── same Wi-Fi ────�
    `ws://192.168.x.x:8765` and a 6-digit room code as text, for manual entry).
 2. Open the phone app (same Wi-Fi network!) and tap "Scan QR to connect",
    pointing the camera at the PC's QR code.
-3. "Phone Webcam" appears as a virtual camera on the PC, selectable in
-   Zoom/Teams/OBS/Discord/etc.
+3. "OBS Virtual Camera" appears as a virtual camera on the PC, selectable in
+   Zoom/Teams/OBS/Discord/browsers/etc. The PC app's installer bundles
+   everything needed for this — no separate driver install required.
 
 ## `server/` — only needed for cross-network use
 

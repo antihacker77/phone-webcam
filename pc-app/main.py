@@ -105,7 +105,15 @@ class App:
         self.root.mainloop()
 
 
-CAMERA_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_worker.py")
+def camera_worker_command(w: int, h: int, fps: int) -> list:
+    if getattr(sys, "frozen", False):
+        # PyInstaller build: camera_worker.py is bundled as its own sibling
+        # .exe (see build.spec) since a frozen main.py has no Python
+        # interpreter to run a .py script with.
+        worker = os.path.join(os.path.dirname(sys.executable), "camera_worker.exe")
+        return [worker, str(w), str(h), str(fps)]
+    worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_worker.py")
+    return [sys.executable, worker, str(w), str(h), str(fps)]
 
 
 class CameraSink:
@@ -125,7 +133,7 @@ class CameraSink:
         if self._proc is None or self._size != (w, h):
             self.close()
             self._proc = subprocess.Popen(
-                [sys.executable, CAMERA_WORKER, str(w), str(h), str(CAM_FPS)],
+                camera_worker_command(w, h, CAM_FPS),
                 stdin=subprocess.PIPE,
             )
             self._size = (w, h)
