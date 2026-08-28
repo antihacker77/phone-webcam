@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MediaStream,
   RTCPeerConnection,
@@ -28,9 +28,13 @@ export function useCameraStream() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isMuted, setIsMuted] = useState(false);
+  const [uploadKbps, setUploadKbps] = useState<number | null>(null);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const lastVideoStatsRef = useRef<{ bytes: number; time: number } | null>(null);
 
   const cleanup = useCallback(() => {
     pcRef.current?.close();
@@ -39,6 +43,7 @@ export function useCameraStream() {
     wsRef.current = null;
     localStream?.getTracks().forEach((t) => t.stop());
     setLocalStream(null);
+    setIsMuted(false);
   }, [localStream]);
 
   const connect = useCallback(
@@ -49,7 +54,7 @@ export function useCameraStream() {
       let stream: MediaStream;
       try {
         stream = (await mediaDevices.getUserMedia({
-          audio: false,
+          audio: true,
           video: { facingMode },
         })) as MediaStream;
       } catch (err: any) {
@@ -125,5 +130,67 @@ export function useCameraStream() {
     setFacingMode((m) => (m === 'user' ? 'environment' : 'user'));
   }, [localStream]);
 
-  return { status, errorMessage, localStream, connect, disconnect, switchCamera };
+  const toggleMute = useCallback(() => {
+    const audioTrack = localStream?.getAudioTracks()[0];
+    if (!audioTrack) return;
+    audioTrack.enabled = isMuted;
+    setIsMuted((m) => !m);
+  }, [localStream, isMuted]);
+
+  // Real upload bitrate + round-trip latency, sampled from the live WebRTC
+  // connection — not simulated.
+  useEffect(() => {
+    if (status !== 'connected') {
+      setUploadKbps(null);
+      setLatencyMs(null);
+      lastVideoStatsRef.current = null;
+      return;
+    }
+    const id = setInterval(async () => {
+      const pc = pcRef.current;
+      if (!pc) return;
+      let report: any;
+      try {
+        report = await pc.getStats();
+      } catch {
+        return;
+      }
+      report.forEach((stat: any) => {
+        const kind = stat.kind ?? stat.mediaType;
+        if (stat.type === 'outbound-rtp' && kind === 'video' && typeof stat.bytesSent === 'number') {
+          const now = Date.now();
+          const prev = lastVideoStatsRef.current;
+          if (prev) {
+            const deltaBytes = stat.bytesSent - prev.bytes;
+            const deltaSec = (now - prev.time) / 1000;
+            if (deltaSec > 0 && deltaBytes >= 0) {
+              setUploadKbps(Math.round((deltaBytes * 8) / deltaSec / 1000));
+            }
+          }
+          lastVideoStatsRef.current = { bytes: stat.bytesSent, time: now };
+        }
+        if (
+          stat.type === 'candidate-pair' &&
+          (stat.state === 'succeeded' || stat.nominated) &&
+          typeof stat.currentRoundTripTime === 'number'
+        ) {
+          setLatencyMs(Math.round(stat.currentRoundTripTime * 1000));
+        }
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [status]);
+
+  return {
+    status,
+    errorMessage,
+    localStream,
+    isMuted,
+    uploadKbps,
+    latencyMs,
+    connect,
+    disconnect,
+    switchCamera,
+    toggleMute,
+  };
 }

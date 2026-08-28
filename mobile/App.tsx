@@ -3,8 +3,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useKeepAwake } from 'expo-keep-awake';
+import * as Battery from 'expo-battery';
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Pressable,
   SafeAreaView,
   StatusBar,
@@ -95,16 +97,38 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [scanning, setScanning] = useState(false);
+  const [addressFocused, setAddressFocused] = useState(false);
+  const [codeFocused, setCodeFocused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [videoInfo, setVideoInfo] = useState<{ width?: number; height?: number; frameRate?: number } | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
-  const { status, errorMessage, localStream, connect, disconnect, switchCamera } =
-    useCameraStream();
+  const {
+    status,
+    errorMessage,
+    localStream,
+    isMuted,
+    uploadKbps,
+    latencyMs,
+    connect,
+    disconnect,
+    switchCamera,
+    toggleMute,
+  } = useCameraStream();
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY_SERVER).then((saved) => {
       if (saved) setServerUrl(saved);
     });
+  }, []);
+
+  useEffect(() => {
+    let subscription: { remove: () => void } | undefined;
+    Battery.getBatteryLevelAsync()
+      .then(setBatteryLevel)
+      .catch(() => {});
+    subscription = Battery.addBatteryLevelListener(({ batteryLevel: level }) => setBatteryLevel(level));
+    return () => subscription?.remove();
   }, []);
 
   useEffect(() => {
@@ -162,6 +186,13 @@ export default function App() {
     startConnection(payload.s, payload.c);
   };
 
+  const handleHelpPress = () => {
+    Alert.alert(
+      'Establish Link',
+      'Both devices must be on the same Wi-Fi network. Get the address and code from the PC app window, or tap "Scan PC\'s QR Code" and point this camera at it.'
+    );
+  };
+
   if (scanning) {
     return (
       <View style={styles.safeDark}>
@@ -212,18 +243,33 @@ export default function App() {
             <RTCView streamURL={localStream.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" mirror />
           )}
           {videoInfo?.width && (
-            <View style={styles.videoHudChip}>
-              <Text style={styles.videoHudText}>
+            <View style={[styles.videoHudChip, styles.videoHudTopLeft]}>
+              <Text style={styles.videoHudTextCyan}>
                 {videoInfo.width}×{videoInfo.height} · {Math.round(videoInfo.frameRate ?? 0)}fps
               </Text>
             </View>
           )}
+          <View style={[styles.videoHudChip, styles.videoHudTopRight]}>
+            <Text style={styles.videoHudText}>{uploadKbps != null ? (uploadKbps / 1000).toFixed(1) : '—'} Mbps</Text>
+          </View>
+          <View style={styles.videoRecRow}>
+            <View style={styles.recDot} />
+            <Text style={styles.videoHudText}>{formatElapsed(elapsedSeconds)}</Text>
+          </View>
         </View>
 
         <View style={styles.liveStatsRow}>
           <View style={styles.statChip}>
-            <Text style={styles.statLabel}>ELAPSED</Text>
-            <Text style={styles.statValue}>{formatElapsed(elapsedSeconds)}</Text>
+            <Text style={styles.statLabel}>LATENCY</Text>
+            <Text style={[styles.statValue, { color: colors.cyan }]}>
+              {latencyMs != null ? `${latencyMs}ms` : '—'}
+            </Text>
+          </View>
+          <View style={styles.statChip}>
+            <Text style={styles.statLabel}>BATTERY</Text>
+            <Text style={[styles.statValue, { color: colors.green }]}>
+              {batteryLevel != null ? `${Math.round(batteryLevel * 100)}%` : '—'}
+            </Text>
           </View>
           <View style={styles.statChip}>
             <Text style={styles.statLabel}>PROTOCOL</Text>
@@ -232,14 +278,27 @@ export default function App() {
         </View>
 
         <View style={styles.liveControls}>
-          <Pressable style={styles.controlBtn} onPress={switchCamera}>
-            <Ionicons name="camera-reverse-outline" size={22} color={colors.text} />
-            <Text style={styles.controlBtnLabel}>Flip</Text>
-          </Pressable>
-          <Pressable style={styles.controlBtn} onPress={disconnect}>
-            <Ionicons name="stop-circle-outline" size={22} color={colors.danger} />
-            <Text style={[styles.controlBtnLabel, { color: colors.danger }]}>Stop</Text>
-          </Pressable>
+          <View style={styles.controlItem}>
+            <Pressable style={styles.controlCircle} onPress={switchCamera}>
+              <Ionicons name="camera-reverse-outline" size={20} color={colors.text} />
+            </Pressable>
+            <Text style={styles.controlLabel}>Flip</Text>
+          </View>
+          <View style={styles.controlItem}>
+            <Pressable
+              style={[styles.controlCircle, isMuted && styles.controlCircleActive]}
+              onPress={toggleMute}
+            >
+              <Ionicons name={isMuted ? 'mic-off-outline' : 'mic-outline'} size={20} color={colors.text} />
+            </Pressable>
+            <Text style={styles.controlLabel}>{isMuted ? 'Muted' : 'Mute Mic'}</Text>
+          </View>
+          <View style={styles.controlItem}>
+            <Pressable style={[styles.controlCircle, styles.controlCircleStop]} onPress={disconnect}>
+              <Ionicons name="stop-circle-outline" size={20} color={colors.danger} />
+            </Pressable>
+            <Text style={[styles.controlLabel, { color: colors.danger }]}>Stop</Text>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -260,7 +319,9 @@ export default function App() {
             <Ionicons name="arrow-back" size={20} color={colors.text} />
           </Pressable>
           <Text style={styles.connectTitle}>Establish Link</Text>
-          <View style={styles.iconBtnSpacer} />
+          <Pressable onPress={handleHelpPress} style={styles.iconBtn}>
+            <Ionicons name="help-circle-outline" size={20} color={colors.textMuted} />
+          </Pressable>
         </View>
 
         <View style={styles.connectBody}>
@@ -268,13 +329,15 @@ export default function App() {
             <Text style={styles.fieldLabel}>PC ADDRESS</Text>
             <Text style={styles.fieldRequired}>REQUIRED</Text>
           </View>
-          <View style={styles.inputWrap}>
+          <View style={[styles.inputWrap, addressFocused && styles.inputWrapFocused]}>
             <Ionicons name="server-outline" size={16} color={colors.cyan} />
             <TextInput
               style={styles.input}
               value={serverUrl}
               onChangeText={setServerUrl}
               editable={!isActive}
+              onFocus={() => setAddressFocused(true)}
+              onBlur={() => setAddressFocused(false)}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="ws://192.168.1.42:8765"
@@ -282,14 +345,19 @@ export default function App() {
             />
           </View>
 
-          <Text style={[styles.fieldLabel, { marginTop: 20 }]}>CONNECTION CODE</Text>
-          <View style={styles.inputWrap}>
+          <View style={[styles.fieldHeaderRow, { marginTop: 20 }]}>
+            <Text style={styles.fieldLabel}>CONNECTION CODE</Text>
+            <Text style={styles.fieldHint}>6 DIGITS</Text>
+          </View>
+          <View style={[styles.inputWrap, codeFocused && styles.inputWrapFocused]}>
             <Ionicons name="lock-closed-outline" size={16} color={colors.cyan} />
             <TextInput
               style={styles.input}
               value={roomCode}
               onChangeText={setRoomCode}
               editable={!isActive}
+              onFocus={() => setCodeFocused(true)}
+              onBlur={() => setCodeFocused(false)}
               keyboardType="number-pad"
               maxLength={6}
               placeholder="Code (e.g. 582490)"
@@ -321,7 +389,7 @@ export default function App() {
               colors={isActive ? [colors.dangerDark, colors.danger] : [colors.blue, colors.cyan]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={styles.primaryBtn}
+              style={[styles.primaryBtn, styles.primaryBtnGlow]}
             >
               <Ionicons name={isActive ? 'close' : 'wifi'} size={18} color="#fff" />
               <Text style={styles.primaryBtnText}>{isActive ? 'Cancel' : 'Connect Live'}</Text>
@@ -336,20 +404,25 @@ export default function App() {
     <SafeAreaView style={styles.safeDark}>
       <StatusBar barStyle="light-content" />
       <View style={styles.homeWrap}>
-        <LinearGradient colors={[colors.blue, colors.cyan]} style={styles.logoRing}>
-          <View style={styles.logoInner}>
-            <Ionicons name="videocam" size={30} color={colors.cyan} />
+        <View style={styles.logoGlow}>
+          <View style={styles.logoOuterRing}>
+            <View style={styles.logoInnerRing}>
+              <View style={styles.logoDot} />
+            </View>
           </View>
-        </LinearGradient>
+        </View>
 
         <Text style={styles.metaLine}>V{appConfig.expo.version} · WIRELESS</Text>
         <Text style={styles.appTitle}>Phone Webcam</Text>
         <Text style={styles.appSubtitle}>Turn this phone into a wireless webcam for your PC</Text>
 
-        <View style={styles.statusPill}>
-          <View style={[styles.dot, { backgroundColor: statusColor(status) }]} />
-          <Text style={styles.statusPillText}>{statusText(status, errorMessage)}</Text>
-          <Text style={styles.statusPillMeta}>LAN ONLY</Text>
+        <View style={styles.statusCard}>
+          <View style={styles.statusCardLeft}>
+            <View style={[styles.dot, { backgroundColor: statusColor(status) }]} />
+            <Text style={styles.statusCardText}>{statusText(status, errorMessage)}</Text>
+          </View>
+          <View style={styles.statusCardDivider} />
+          <Text style={styles.statusCardMeta}>LAN ONLY</Text>
         </View>
       </View>
 
@@ -359,7 +432,7 @@ export default function App() {
             colors={[colors.blue, colors.cyan]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={styles.primaryBtn}
+            style={[styles.primaryBtn, styles.primaryBtnGlow]}
           >
             <Ionicons name="wifi" size={18} color="#fff" />
             <Text style={styles.primaryBtnText}>Get Connected</Text>
@@ -379,53 +452,73 @@ const styles = StyleSheet.create({
 
   // Home
   homeWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  logoRing: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    padding: 2,
+  logoGlow: {
+    shadowColor: colors.cyan,
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  logoOuterRing: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    borderWidth: 1.5,
+    borderColor: colors.cyan,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  logoInner: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 42,
-    backgroundColor: colors.bgDeep,
+  logoInnerRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1.5,
+    borderColor: colors.blue,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  logoDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.blue,
+    shadowColor: colors.blue,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
   },
   metaLine: {
-    marginTop: 18,
+    marginTop: 22,
     color: colors.cyan,
     fontSize: 11,
     letterSpacing: 1.5,
     fontFamily: 'Menlo',
   },
-  appTitle: { marginTop: 8, color: colors.text, fontSize: 28, fontWeight: '800' },
+  appTitle: { marginTop: 10, color: colors.text, fontSize: 28, fontWeight: '800' },
   appSubtitle: {
-    marginTop: 8,
+    marginTop: 10,
     color: colors.textMuted,
     fontSize: 13.5,
     textAlign: 'center',
     lineHeight: 19,
     maxWidth: 260,
   },
-  statusPill: {
-    marginTop: 28,
+  statusCard: {
+    marginTop: 40,
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
     backgroundColor: colors.bgPanel,
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
+  statusCardLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  statusCardText: { color: colors.text, fontSize: 12 },
+  statusCardDivider: { width: 1, height: 16, backgroundColor: colors.line, marginHorizontal: 12 },
+  statusCardMeta: { color: colors.textFaint, fontSize: 10.5, fontFamily: 'Menlo' },
   dot: { width: 7, height: 7, borderRadius: 4 },
-  statusPillText: { color: colors.text, fontSize: 12 },
-  statusPillMeta: { color: colors.textFaint, fontSize: 10.5, fontFamily: 'Menlo', marginLeft: 6 },
   homeFooter: { paddingHorizontal: 24, paddingBottom: 20, gap: 12 },
   footerCaptionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   footerCaption: { color: colors.textFaint, fontSize: 11.5 },
@@ -439,6 +532,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 15,
   },
+  primaryBtnGlow: {
+    shadowColor: colors.cyan,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+  },
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 14.5 },
 
   // Connect screen
@@ -450,12 +549,12 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  iconBtnSpacer: { width: 36 },
   connectTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
-  connectBody: { flex: 1, paddingHorizontal: 24, paddingTop: 24 },
+  connectBody: { flex: 1, paddingHorizontal: 24, paddingTop: 28 },
   fieldHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   fieldLabel: { color: colors.textMuted, fontSize: 10.5, letterSpacing: 1, fontFamily: 'Menlo' },
   fieldRequired: { color: colors.cyan, fontSize: 10, letterSpacing: 1, fontFamily: 'Menlo' },
+  fieldHint: { color: colors.textFaint, fontSize: 10, letterSpacing: 1, fontFamily: 'Menlo' },
   inputWrap: {
     marginTop: 8,
     flexDirection: 'row',
@@ -468,8 +567,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  inputWrapFocused: {
+    borderColor: colors.blue,
+    shadowColor: colors.blue,
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
   input: { flex: 1, color: colors.text, fontSize: 14, fontFamily: 'Menlo' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 22 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 26 },
   dividerLine: { flex: 1, height: 1, backgroundColor: colors.line },
   dividerText: { color: colors.textFaint, fontSize: 11, letterSpacing: 1 },
   qrCard: {
@@ -532,15 +638,29 @@ const styles = StyleSheet.create({
   liveVideoWrap: { flex: 1, marginHorizontal: 12, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000' },
   videoHudChip: {
     position: 'absolute',
-    top: 10,
-    left: 10,
     backgroundColor: 'rgba(0,0,0,0.5)',
     borderRadius: 8,
     paddingVertical: 4,
     paddingHorizontal: 8,
   },
-  videoHudText: { color: colors.text, fontSize: 10.5, fontFamily: 'Menlo' },
-  liveStatsRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 12, marginTop: 12 },
+  videoHudTopLeft: { top: 10, left: 10 },
+  videoHudTopRight: { top: 10, right: 10 },
+  videoHudText: { color: colors.textMuted, fontSize: 10.5, fontFamily: 'Menlo' },
+  videoHudTextCyan: { color: colors.cyan, fontSize: 10.5, fontFamily: 'Menlo', fontWeight: '700' },
+  videoRecRow: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  recDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.danger },
+  liveStatsRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginTop: 12 },
   statChip: {
     flex: 1,
     backgroundColor: colors.bgPanel,
@@ -548,20 +668,23 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     borderRadius: 12,
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
-  statLabel: { color: colors.textFaint, fontSize: 9.5, letterSpacing: 1, fontFamily: 'Menlo' },
-  statValue: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 2, fontFamily: 'Menlo' },
-  liveControls: { flexDirection: 'row', gap: 12, paddingHorizontal: 12, paddingVertical: 16 },
-  controlBtn: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
+  statLabel: { color: colors.textFaint, fontSize: 9, letterSpacing: 1, fontFamily: 'Menlo' },
+  statValue: { color: colors.text, fontSize: 13.5, fontWeight: '700', marginTop: 2, fontFamily: 'Menlo' },
+  liveControls: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 20 },
+  controlItem: { alignItems: 'center', gap: 6 },
+  controlCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: colors.bgPanel,
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 14,
-    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  controlBtnLabel: { color: colors.text, fontSize: 11 },
+  controlCircleActive: { borderColor: colors.amber },
+  controlCircleStop: { borderColor: colors.danger },
+  controlLabel: { color: colors.textMuted, fontSize: 10.5 },
 });
