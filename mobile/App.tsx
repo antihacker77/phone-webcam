@@ -42,14 +42,6 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
 
-      {localStream ? (
-        <RTCView streamURL={localStream.toURL()} style={styles.preview} objectFit="cover" mirror />
-      ) : (
-        <View style={[styles.preview, styles.previewPlaceholder]}>
-          <Text style={styles.placeholderText}>Camera preview appears here</Text>
-        </View>
-      )}
-
       <View style={styles.controls}>
         <Text style={styles.label}>PC address (shown on PC app)</Text>
         <TextInput
@@ -86,6 +78,14 @@ export default function App() {
           </Pressable>
         </View>
       </View>
+
+      {localStream ? (
+        <RTCView streamURL={localStream.toURL()} style={styles.preview} objectFit="cover" mirror />
+      ) : (
+        <View style={[styles.preview, styles.previewPlaceholder]}>
+          <Text style={styles.placeholderText}>Camera preview appears here</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
