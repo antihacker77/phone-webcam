@@ -21,7 +21,8 @@ this automatically, but running from source doesn't.
 A window shows a QR code — scan it from the mobile app to connect (its
 address `ws://192.168.x.x:8765` and 6-digit room code are also shown as
 text, for manual entry if scanning isn't possible). The PC and phone must be
-on the **same Wi-Fi network**. Once the phone connects, "OBS Virtual Camera"
+on the **same Wi-Fi network**. Video is always 1280×720 at 60fps — there's
+no quality picker on either side, by design. Once the phone connects, "OBS Virtual Camera"
 becomes available as a camera source in any app (you may need to reopen the
 other app's camera picker), and the window switches to a live view: a
 preview of the stream, real bitrate/packet-loss/connection-quality stats, and
@@ -29,8 +30,6 @@ camera controls —
 
 - **Mirror** / **Rotate 90°** — flip or rotate the feed before it reaches
   the virtual camera, the preview and any recording.
-- **Output resolution** — resize the feed to 720p/1080p/4K (or leave it at
-  the phone's source resolution) regardless of what the phone sends.
 - **Snapshot** (camera icon) — saves the current frame as a PNG to
   `Pictures\Phone Webcam\`.
 - **Record Video** — records the (already mirrored/rotated/resized) stream
