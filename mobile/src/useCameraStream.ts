@@ -64,9 +64,18 @@ export function useCameraStream() {
           audio: true,
           video: {
             facingMode,
-            width: { ideal: FIXED_WIDTH, max: FIXED_WIDTH },
-            height: { ideal: FIXED_HEIGHT, max: FIXED_HEIGHT },
-            frameRate: { ideal: FIXED_FRAME_RATE, max: FIXED_FRAME_RATE },
+            // `ideal` only, deliberately no `max` — react-native-webrtc on
+            // iOS combining an exact frameRate cap with exact width/height
+            // caps can fail to find any matching AVCaptureDevice format
+            // (formats expose fixed frame-rate *ranges* per resolution, and
+            // not every resolution's range reaches 60). When that happens
+            // getUserMedia still resolves (so the try/catch below never
+            // fires) but capture never actually starts: local RTCView goes
+            // black and track.getSettings() comes back without width/height,
+            // exactly what showed up on-device after `max` was added here.
+            width: { ideal: FIXED_WIDTH },
+            height: { ideal: FIXED_HEIGHT },
+            frameRate: { ideal: FIXED_FRAME_RATE },
           },
         })) as MediaStream;
       } catch (err: any) {
