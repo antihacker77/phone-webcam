@@ -627,7 +627,11 @@ class App:
                         text=f"{bitrate_kbps / 1000:.1f} Mbps" if bitrate_kbps is not None else "—")
                     self.loss_value.configure(text=f"{loss_pct:.1f}%" if loss_pct is not None else "—")
                     if quality is not None:
-                        self.quality_value.configure(text=quality)
+                        # A real quality reading always wins visually over
+                        # whatever color an earlier ICE-state message left
+                        # behind (e.g. red from a transient "failed"/
+                        # "disconnected" blip before the link recovered).
+                        self.quality_value.configure(text=quality, text_color=COLORS["green"])
                 elif kind == "ice_state":
                     # Real inbound-rtp stats (and therefore a real quality
                     # reading) only exist once a video packet has actually

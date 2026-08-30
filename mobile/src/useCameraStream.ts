@@ -72,71 +72,96 @@ export function useCameraStream() {
       }
       setLocalStream(stream);
 
-      // Same-network only: no STUN/TURN needed, WebRTC connects via local
-      // host candidates directly between the phone and the PC.
-      const pc = new RTCPeerConnection();
-      pcRef.current = pc;
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      // Everything below is synchronous setup (WebSocket/RTCPeerConnection
+      // construction) followed by event handlers that run later. Without
+      // this try/catch, a single synchronous throw here — e.g.
+      // `new WebSocket(serverUrl)` on a malformed address typed into the
+      // manual-entry field — left status stuck on 'connecting' forever with
+      // no error shown, since nothing after this point would ever run to
+      // move it along. Stuck 'connecting' also means `isActive` stays true,
+      // which disables both text inputs (`editable={!isActive}`) — from the
+      // user's side, "the app won't let me type in the code field" with no
+      // obvious cause or recovery.
+      try {
+        // Same-network only: no STUN/TURN needed, WebRTC connects via local
+        // host candidates directly between the phone and the PC.
+        const pc = new RTCPeerConnection();
+        pcRef.current = pc;
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      const ws = new WebSocket(serverUrl);
-      wsRef.current = ws;
+        const ws = new WebSocket(serverUrl);
+        wsRef.current = ws;
 
-      // Set once the WebRTC handshake completes, so onclose/onerror below can
-      // tell "session ended after streaming" from "never connected" without
-      // reading stale React state from this closure.
-      let hasConnected = false;
+        // Set once the WebRTC handshake completes, so onclose/onerror below
+        // can tell "session ended after streaming" from "never connected"
+        // without reading stale React state from this closure.
+        let hasConnected = false;
 
-      ws.onerror = () => {
-        if (pcRef.current === null) return; // already torn down by cleanup()
+        ws.onerror = () => {
+          if (pcRef.current === null) return; // already torn down by cleanup()
+          cleanup();
+          setStatus('error');
+          setErrorMessage('Could not reach the PC app — check the address and that both are on the same Wi-Fi.');
+        };
+
+        ws.onclose = () => {
+          if (pcRef.current === null) return; // already torn down (disconnect(), onerror, or the error message below)
+          const wasConnected = hasConnected;
+          cleanup();
+          setStatus(wasConnected ? 'ended' : 'error');
+          if (!wasConnected) {
+            setErrorMessage('Connection closed before it was established — the PC app may be busy or the code may be wrong.');
+          }
+        };
+
+        ws.onmessage = async (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+
+            if (msg.type === 'joined') {
+              const offer = await pc.createOffer({});
+              await pc.setLocalDescription(offer);
+              await waitForIceGatheringComplete(pc);
+              setStatus('waiting-for-answer');
+              ws.send(
+                JSON.stringify({
+                  type: 'offer',
+                  payload: { sdp: pc.localDescription!.sdp, type: pc.localDescription!.type },
+                })
+              );
+              return;
+            }
+
+            if (msg.type === 'answer') {
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+              hasConnected = true;
+              setStatus('connected');
+              return;
+            }
+
+            if (msg.type === 'error') {
+              setStatus('error');
+              setErrorMessage(msg.message ?? 'Unknown error from PC app');
+              cleanup();
+            }
+          } catch (err: any) {
+            // A malformed message or a WebRTC call throwing here (e.g.
+            // createOffer/setRemoteDescription) is an async callback, not
+            // caught by the outer try/catch — same "stuck forever" risk.
+            cleanup();
+            setStatus('error');
+            setErrorMessage(`Signaling error: ${err?.message ?? err}`);
+          }
+        };
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'join', code: roomCode }));
+        };
+      } catch (err: any) {
         cleanup();
         setStatus('error');
-        setErrorMessage('Could not reach the PC app — check the address and that both are on the same Wi-Fi.');
-      };
-
-      ws.onclose = () => {
-        if (pcRef.current === null) return; // already torn down (disconnect(), onerror, or the error message below)
-        const wasConnected = hasConnected;
-        cleanup();
-        setStatus(wasConnected ? 'ended' : 'error');
-        if (!wasConnected) {
-          setErrorMessage('Connection closed before it was established — the PC app may be busy or the code may be wrong.');
-        }
-      };
-
-      ws.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
-
-        if (msg.type === 'joined') {
-          const offer = await pc.createOffer({});
-          await pc.setLocalDescription(offer);
-          await waitForIceGatheringComplete(pc);
-          setStatus('waiting-for-answer');
-          ws.send(
-            JSON.stringify({
-              type: 'offer',
-              payload: { sdp: pc.localDescription!.sdp, type: pc.localDescription!.type },
-            })
-          );
-          return;
-        }
-
-        if (msg.type === 'answer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
-          hasConnected = true;
-          setStatus('connected');
-          return;
-        }
-
-        if (msg.type === 'error') {
-          setStatus('error');
-          setErrorMessage(msg.message ?? 'Unknown error from PC app');
-          cleanup();
-        }
-      };
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'join', code: roomCode }));
-      };
+        setErrorMessage(`Could not start the connection: ${err?.message ?? err}`);
+      }
     },
     [facingMode, cleanup]
   );
