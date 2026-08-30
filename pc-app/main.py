@@ -589,7 +589,7 @@ class App:
         self.root.mainloop()
 
 
-async def consume_video(track, app: App, sink: CameraSink):
+async def consume_video(track, app: App, sink: CameraSink, activity: dict):
     app.set_status("Receiving video…")
     frame_count = 0
     fps_window_start = time.monotonic()
@@ -597,6 +597,7 @@ async def consume_video(track, app: App, sink: CameraSink):
     try:
         while True:
             frame = await track.recv()
+            activity["last_frame"] = time.monotonic()
             img = app.transformer.apply(frame.to_ndarray(format="rgb24"))
             sink.send(img)
             app.recorder.write(img)
@@ -664,6 +665,35 @@ async def report_stats(pc: RTCPeerConnection, app: App):
         pass
 
 
+FIRST_FRAME_TIMEOUT = 18.0  # ICE connectivity + first decode can legitimately take a while
+STALLED_TIMEOUT = 6.0  # but going silent mid-stream this long means the link actually died
+
+
+async def watch_for_stall(ws, activity: dict, connected_at: float):
+    """SDP negotiation succeeding doesn't mean media is actually flowing —
+    ICE can silently fail to find a working path (firewall, AP client
+    isolation, a dead Wi-Fi link) and the app would otherwise sit forever on
+    "Connected" with 0 FPS. Worse, the signaling server only frees up for the
+    next phone once this WebSocket closes, so a session stuck like this
+    blocks every future connection attempt until a TCP-level timeout (which
+    can take minutes) eventually notices. Force-close once it's clearly dead
+    so the phone can immediately retry against a clean session.
+    """
+    try:
+        while True:
+            await asyncio.sleep(2.0)
+            last = activity.get("last_frame")
+            if last is None:
+                if time.monotonic() - connected_at > FIRST_FRAME_TIMEOUT:
+                    await ws.close(code=1001, reason="no video arrived")
+                    return
+            elif time.monotonic() - last > STALLED_TIMEOUT:
+                await ws.close(code=1001, reason="video stalled")
+                return
+    except asyncio.CancelledError:
+        pass
+
+
 class Signaling:
     """Handles one phone connection at a time; a fresh code is issued after each session."""
 
@@ -701,13 +731,16 @@ class Signaling:
         pc.addTransceiver("video", direction="recvonly")
         sink = CameraSink()
         stats_task = None
+        watchdog_task = None
+        activity = {"last_frame": None}
 
         @pc.on("track")
         def on_track(track):
-            nonlocal stats_task
+            nonlocal stats_task, watchdog_task
             if track.kind == "video":
-                asyncio.ensure_future(consume_video(track, self.app, sink))
+                asyncio.ensure_future(consume_video(track, self.app, sink, activity))
                 stats_task = asyncio.ensure_future(report_stats(pc, self.app))
+                watchdog_task = asyncio.ensure_future(watch_for_stall(ws, activity, time.monotonic()))
                 self.app.set_view("live")
 
         try:
@@ -729,6 +762,8 @@ class Signaling:
         finally:
             if stats_task is not None:
                 stats_task.cancel()
+            if watchdog_task is not None:
+                watchdog_task.cancel()
             sink.close()
             await pc.close()
             self.busy = False
