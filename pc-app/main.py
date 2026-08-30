@@ -568,6 +568,9 @@ class App:
     def push_stats(self, bitrate_kbps, loss_pct, quality):
         self.events.put(("stats", (bitrate_kbps, loss_pct, quality)))
 
+    def push_ice_state(self, state: str):
+        self.events.put(("ice_state", state))
+
     _last_preview_frame = None
 
     # --------------------------------------------------------------- polling
@@ -577,7 +580,11 @@ class App:
                 kind, value = self.events.get_nowait()
                 if kind == "view":
                     self._show(self.live_view if value == "live" else self.disconnected_view)
-                    if value != "live":
+                    if value == "live":
+                        self.bitrate_value.configure(text="—")
+                        self.loss_value.configure(text="—")
+                        self.quality_value.configure(text="—", text_color=COLORS["green"])
+                    else:
                         self.recorder.stop()
                         self.record_btn.configure(text="●  Record Video", fg_color=COLORS["bg_panel_alt"],
                                                    text_color=COLORS["danger"])
@@ -619,7 +626,26 @@ class App:
                     self.bitrate_value.configure(
                         text=f"{bitrate_kbps / 1000:.1f} Mbps" if bitrate_kbps is not None else "—")
                     self.loss_value.configure(text=f"{loss_pct:.1f}%" if loss_pct is not None else "—")
-                    self.quality_value.configure(text=quality)
+                    if quality is not None:
+                        self.quality_value.configure(text=quality)
+                elif kind == "ice_state":
+                    # Real inbound-rtp stats (and therefore a real quality
+                    # reading) only exist once a video packet has actually
+                    # arrived. Until then, this chip shows aiortc's own
+                    # connection-state machine instead of a placeholder dash
+                    # — "checking"/"failed"/"disconnected" here is the
+                    # concrete signal that SDP succeeded but ICE never found
+                    # (or lost) a working path, e.g. a firewall or AP client
+                    # isolation, as opposed to a local performance problem.
+                    ice_labels = {
+                        "new": "Starting…", "connecting": "Connecting…",
+                        "connected": "Connected (no media yet)", "completed": "Connected (no media yet)",
+                        "disconnected": "ICE disconnected", "failed": "ICE failed", "closed": "Closed",
+                    }
+                    self.quality_value.configure(text=ice_labels.get(value, value))
+                    color = COLORS["danger"] if value in ("failed", "disconnected", "closed") else (
+                        COLORS["amber"] if value in ("new", "connecting") else COLORS["green"])
+                    self.quality_value.configure(text_color=color)
         except queue.Empty:
             pass
         if self.recorder.active:
@@ -703,7 +729,7 @@ async def report_stats(pc: RTCPeerConnection, app: App):
                             loss_pct = 100 * d_lost / denom
                     if received is not None and lost is not None:
                         last_received, last_lost = received, lost
-            app.push_stats(bitrate_kbps, loss_pct, quality_label(loss_pct))
+            app.push_stats(bitrate_kbps, loss_pct, quality_label(loss_pct) if loss_pct is not None else None)
     except asyncio.CancelledError:
         pass
 
@@ -776,6 +802,10 @@ class Signaling:
         stats_task = None
         watchdog_task = None
         activity = {"last_frame": None}
+
+        @pc.on("connectionstatechange")
+        async def on_connection_state_change():
+            self.app.push_ice_state(pc.connectionState)
 
         @pc.on("track")
         def on_track(track):
