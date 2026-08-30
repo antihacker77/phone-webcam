@@ -18,17 +18,9 @@ import {
 import { RTCView } from 'react-native-webrtc';
 
 import appConfig from './app.json';
-import { useCameraStream, type Resolution, type Status } from './src/useCameraStream';
+import { useCameraStream, type Status } from './src/useCameraStream';
 
 const STORAGE_KEY_SERVER = 'phonewebcam.serverUrl';
-const STORAGE_KEY_QUALITY = 'phonewebcam.quality';
-
-const QUALITY_PRESETS: { key: string; label: string; resolution: Resolution }[] = [
-  { key: '720p', label: '720p', resolution: { width: 1280, height: 720 } },
-  { key: '1080p', label: '1080p', resolution: { width: 1920, height: 1080 } },
-  { key: '4k', label: '4K', resolution: { width: 3840, height: 2160 } },
-];
-const DEFAULT_QUALITY_KEY = '1080p';
 
 const colors = {
   bgDeep: '#05070d',
@@ -105,7 +97,6 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [scanning, setScanning] = useState(false);
-  const [qualityKey, setQualityKey] = useState(DEFAULT_QUALITY_KEY);
   const [addressFocused, setAddressFocused] = useState(false);
   const [codeFocused, setCodeFocused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -128,9 +119,6 @@ export default function App() {
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY_SERVER).then((saved) => {
       if (saved) setServerUrl(saved);
-    });
-    AsyncStorage.getItem(STORAGE_KEY_QUALITY).then((saved) => {
-      if (saved && QUALITY_PRESETS.some((p) => p.key === saved)) setQualityKey(saved);
     });
   }, []);
 
@@ -171,13 +159,7 @@ export default function App() {
     setServerUrl(address);
     setRoomCode(code);
     await AsyncStorage.setItem(STORAGE_KEY_SERVER, address);
-    const preset = QUALITY_PRESETS.find((p) => p.key === qualityKey) ?? QUALITY_PRESETS[1];
-    connect(address, code.trim(), preset.resolution);
-  };
-
-  const handleQualitySelect = async (key: string) => {
-    setQualityKey(key);
-    await AsyncStorage.setItem(STORAGE_KEY_QUALITY, key);
+    connect(address, code.trim());
   };
 
   const handleConnectPress = async () => {
@@ -381,25 +363,6 @@ export default function App() {
               placeholder="Code (e.g. 582490)"
               placeholderTextColor={colors.textFaint}
             />
-          </View>
-
-          <Text style={[styles.fieldLabel, { marginTop: 20 }]}>QUALITY</Text>
-          <View style={styles.qualityRow}>
-            {QUALITY_PRESETS.map((preset) => {
-              const selected = preset.key === qualityKey;
-              return (
-                <Pressable
-                  key={preset.key}
-                  style={[styles.qualityOption, selected && styles.qualityOptionSelected]}
-                  onPress={() => handleQualitySelect(preset.key)}
-                  disabled={isActive}
-                >
-                  <Text style={[styles.qualityOptionText, selected && styles.qualityOptionTextSelected]}>
-                    {preset.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
           </View>
 
           <View style={styles.dividerRow}>
@@ -612,26 +575,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
   },
   input: { flex: 1, color: colors.text, fontSize: 14, fontFamily: 'Menlo' },
-  qualityRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  qualityOption: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 9,
-    borderRadius: 10,
-    backgroundColor: colors.bgPanel,
-    borderWidth: 1,
-    borderColor: colors.line,
-  },
-  qualityOptionSelected: {
-    borderColor: colors.cyan,
-    backgroundColor: colors.bgPanelAlt,
-    shadowColor: colors.cyan,
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  qualityOptionText: { color: colors.textMuted, fontSize: 12, fontFamily: 'Menlo' },
-  qualityOptionTextSelected: { color: colors.cyan, fontWeight: '700' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 22 },
   dividerLine: { flex: 1, height: 1, backgroundColor: colors.line },
   dividerText: { color: colors.textFaint, fontSize: 11, letterSpacing: 1 },

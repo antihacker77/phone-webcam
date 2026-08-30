@@ -14,9 +14,12 @@ export type Status =
   | 'ended'
   | 'error';
 
-export type Resolution = { width: number; height: number };
-
-export const DEFAULT_RESOLUTION: Resolution = { width: 1920, height: 1080 };
+// Fixed by design: no per-user quality picker on either end. Both apps
+// negotiate exactly this, so there's never a source/output-size mismatch
+// for the PC side to have to reconcile (see FrameTransformer in main.py).
+const FIXED_WIDTH = 1280;
+const FIXED_HEIGHT = 720;
+const FIXED_FRAME_RATE = 60;
 
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -51,7 +54,7 @@ export function useCameraStream() {
   }, [localStream]);
 
   const connect = useCallback(
-    async (serverUrl: string, roomCode: string, resolution: Resolution = DEFAULT_RESOLUTION) => {
+    async (serverUrl: string, roomCode: string) => {
       setErrorMessage(null);
       setStatus('connecting');
 
@@ -61,8 +64,9 @@ export function useCameraStream() {
           audio: true,
           video: {
             facingMode,
-            width: { ideal: resolution.width },
-            height: { ideal: resolution.height },
+            width: { ideal: FIXED_WIDTH, max: FIXED_WIDTH },
+            height: { ideal: FIXED_HEIGHT, max: FIXED_HEIGHT },
+            frameRate: { ideal: FIXED_FRAME_RATE, max: FIXED_FRAME_RATE },
           },
         })) as MediaStream;
       } catch (err: any) {

@@ -24,22 +24,20 @@ import cv2
 import numpy as np
 import qrcode
 import websockets
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCRtpSender, RTCSessionDescription
 from aiortc.mediastreams import MediaStreamError
 from PIL import Image
 
 APP_VERSION = "1.0.0"
-CAM_FPS = 30
+CAM_FPS = 60
 PORT = 8765
 STATS_INTERVAL = 1.0
-PREVIEW_EVERY_N_FRAMES = 3  # ~10fps preview from a 30fps stream — plenty for a monitor view
+PREVIEW_EVERY_N_FRAMES = 6  # ~10fps preview from a 60fps stream — plenty for a monitor view
 
-OUTPUT_PRESETS = {
-    "Source (no resize)": None,
-    "720p (HD)": (1280, 720),
-    "1080p (Full HD)": (1920, 1080),
-    "4K (Ultra HD)": (3840, 2160),
-}
+# Fixed by design: no quality picker on either end (see mobile's
+# useCameraStream.ts). Both apps always negotiate exactly this, so the
+# resize below only ever fires as a safety net, not as a routine step.
+OUTPUT_SIZE = (1280, 720)
 
 COLORS = {
     "bg_deep": "#05070d",
@@ -105,7 +103,7 @@ class FrameTransformer:
     def __init__(self):
         self.mirror = False
         self.rotation = 0  # degrees, one of 0/90/180/270
-        self.output_size = None  # (w, h) or None to keep the source size
+        self.output_size = OUTPUT_SIZE
 
     _ROTATE_FLAG = {
         90: cv2.ROTATE_90_CLOCKWISE,
@@ -441,18 +439,8 @@ class App:
                                          font=ctk.CTkFont(size=12), command=self._rotate)
         self.rotate_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
-        self.output_var = ctk.StringVar(value="1080p (Full HD)")
-        self.output_menu = ctk.CTkOptionMenu(config, values=list(OUTPUT_PRESETS.keys()),
-                                              variable=self.output_var, height=32,
-                                              fg_color=COLORS["bg_panel_alt"], button_color=COLORS["line"],
-                                              button_hover_color=COLORS["line"],
-                                              text_color=COLORS["text"], font=ctk.CTkFont(size=12),
-                                              command=self._set_output_preset)
-        self.output_menu.pack(fill="x", padx=16, pady=10)
-        self._set_output_preset(self.output_var.get())
-
         row2 = ctk.CTkFrame(config, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=(0, 16))
+        row2.pack(fill="x", padx=16, pady=(10, 16))
         ctk.CTkButton(row2, text="\U0001F4F7", width=40, height=36, fg_color=COLORS["bg_panel_alt"],
                       hover_color=COLORS["line"], border_width=1, border_color=COLORS["line"],
                       font=ctk.CTkFont(size=14), command=self._take_snapshot).pack(side="left")
@@ -507,9 +495,6 @@ class App:
             border_color=COLORS["line"] if not active else COLORS["cyan"],
             text_color=COLORS["text"] if not active else COLORS["cyan"],
         )
-
-    def _set_output_preset(self, choice: str):
-        self.transformer.output_size = OUTPUT_PRESETS.get(choice)
 
     def _take_snapshot(self):
         frame = self._last_preview_frame
@@ -801,7 +786,27 @@ class Signaling:
         self._active_ws = ws
         self.app.set_status("Phone connected, negotiating…")
         pc = RTCPeerConnection()
-        pc.addTransceiver("video", direction="recvonly")
+        video_transceiver = pc.addTransceiver("video", direction="recvonly")
+        # aiortc only ever advertises H264 at profile-level-id 42001f/42e01f
+        # (Constrained Baseline, Level 3.1 — hardcoded in
+        # aiortc/codecs/__init__.py, not something we can raise). Level 3.1's
+        # macroblock-rate budget tops out at 1280x720@30fps and can't do
+        # 1080p at all. Without this, whichever codec the phone's offer lists
+        # first wins the answer (verified: aiortc's answer mirrors the
+        # offer's codec order when no preference is set) — and iOS's
+        # hardware-accelerated H264 encoder is a very plausible thing for
+        # react-native-webrtc to list first. That would silently force the
+        # phone down to (at best) 720p30 or force a resolution drop to stay
+        # under Level 3.1's cap, regardless of what getUserMedia requested —
+        # matching exactly what was reported (good camera-side stats, bad
+        # received video) with nothing wrong on the phone's capture side.
+        # VP8 has no such SDP-level resolution/framerate ceiling, so forcing
+        # it first removes this cap entirely; H264 stays listed as a
+        # fallback only in case some device genuinely lacks VP8 support.
+        _video_caps = RTCRtpSender.getCapabilities("video").codecs
+        _preferred_codecs = [c for c in _video_caps if c.mimeType == "video/VP8"]
+        _preferred_codecs += [c for c in _video_caps if c.mimeType != "video/VP8"]
+        video_transceiver.setCodecPreferences(_preferred_codecs)
         sink = CameraSink()
         stats_task = None
         watchdog_task = None
