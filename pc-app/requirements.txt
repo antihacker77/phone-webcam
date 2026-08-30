@@ -4,3 +4,5 @@ websockets>=12.0
 av>=11.0
 numpy>=1.26
 qrcode[pil]>=7.4
+customtkinter>=5.2.2
+opencv-python-headless>=4.9

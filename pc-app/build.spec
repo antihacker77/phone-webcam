@@ -3,6 +3,12 @@
 # (helper subprocess main.py spawns to talk to the OBS virtual camera —
 # kept as a separate process/exe deliberately, see main.py's CameraSink).
 # Neither needs a config file — the app shows its own address/QR/room code.
+#
+# main.py's UI is built with customtkinter, whose theme JSON/font assets
+# live inside the package and aren't picked up by PyInstaller's default
+# import scan — collect_data_files('customtkinter') below bundles them.
+
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
@@ -10,8 +16,8 @@ app_a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['av', 'aiortc'],
+    datas=collect_data_files('customtkinter'),
+    hiddenimports=['av', 'aiortc', 'cv2'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

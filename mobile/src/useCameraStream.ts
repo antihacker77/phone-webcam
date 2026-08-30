@@ -81,13 +81,26 @@ export function useCameraStream() {
       const ws = new WebSocket(serverUrl);
       wsRef.current = ws;
 
+      // Set once the WebRTC handshake completes, so onclose/onerror below can
+      // tell "session ended after streaming" from "never connected" without
+      // reading stale React state from this closure.
+      let hasConnected = false;
+
       ws.onerror = () => {
+        if (pcRef.current === null) return; // already torn down by cleanup()
+        cleanup();
         setStatus('error');
         setErrorMessage('Could not reach the PC app — check the address and that both are on the same Wi-Fi.');
       };
 
       ws.onclose = () => {
-        setStatus((prev) => (prev === 'connected' ? 'ended' : prev));
+        if (pcRef.current === null) return; // already torn down (disconnect(), onerror, or the error message below)
+        const wasConnected = hasConnected;
+        cleanup();
+        setStatus(wasConnected ? 'ended' : 'error');
+        if (!wasConnected) {
+          setErrorMessage('Connection closed before it was established — the PC app may be busy or the code may be wrong.');
+        }
       };
 
       ws.onmessage = async (event) => {
@@ -109,6 +122,7 @@ export function useCameraStream() {
 
         if (msg.type === 'answer') {
           await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+          hasConnected = true;
           setStatus('connected');
           return;
         }

@@ -23,8 +23,21 @@ address `ws://192.168.x.x:8765` and 6-digit room code are also shown as
 text, for manual entry if scanning isn't possible). The PC and phone must be
 on the **same Wi-Fi network**. Once the phone connects, "OBS Virtual Camera"
 becomes available as a camera source in any app (you may need to reopen the
-other app's camera picker). If Windows Firewall prompts on first run, allow
-access on private networks.
+other app's camera picker), and the window switches to a live view: a
+preview of the stream, real bitrate/packet-loss/connection-quality stats, and
+camera controls —
+
+- **Mirror** / **Rotate 90°** — flip or rotate the feed before it reaches
+  the virtual camera, the preview and any recording.
+- **Output resolution** — resize the feed to 720p/1080p/4K (or leave it at
+  the phone's source resolution) regardless of what the phone sends.
+- **Snapshot** (camera icon) — saves the current frame as a PNG to
+  `Pictures\Phone Webcam\`.
+- **Record Video** — records the (already mirrored/rotated/resized) stream
+  to an MP4 file in `Videos\Phone Webcam\`, named by timestamp.
+- **Disconnect** — ends the current session from the PC side.
+
+If Windows Firewall prompts on first run, allow access on private networks.
 
 ### Register the virtual camera driver (source runs only)
 
