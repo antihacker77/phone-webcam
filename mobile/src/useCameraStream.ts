@@ -17,9 +17,16 @@ export type Status =
 // Fixed by design: no per-user quality picker on either end. Both apps
 // negotiate exactly this, so there's never a source/output-size mismatch
 // for the PC side to have to reconcile (see FrameTransformer in main.py).
-const FIXED_WIDTH = 1280;
-const FIXED_HEIGHT = 720;
-const FIXED_FRAME_RATE = 60;
+// 1080p30 rather than 720p60: VP8 has no hardware encoder on iOS, so at
+// 60fps the software encoder was CPU-starved enough that libwebrtc's
+// automatic degradation silently rendered at a lower internal resolution
+// (stretched back up for display) even when reported bitrate looked fine —
+// showing up as persistent blockiness no bitrate fixed. 30fps halves the
+// encoder's per-second workload, leaving headroom for full-resolution
+// 1080p instead. degradationPreference below backs this up explicitly.
+const FIXED_WIDTH = 1920;
+const FIXED_HEIGHT = 1080;
+const FIXED_FRAME_RATE = 30;
 
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -100,7 +107,25 @@ export function useCameraStream() {
         // host candidates directly between the phone and the PC.
         const pc = new RTCPeerConnection();
         pcRef.current = pc;
-        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+        const senders = stream.getTracks().map((track) => pc.addTrack(track, stream));
+
+        // Without this, libwebrtc's default degradation behavior can trade
+        // resolution for framerate under CPU pressure — invisible in the
+        // bitrate/FPS stats (both keep reporting normally) but visible on
+        // screen as a permanently blocky, stretched-up-from-lower-res image.
+        // VP8 has no hardware encoder on iOS, so a software encoder hitting
+        // that pressure at all is a real risk, not a hypothetical one.
+        const videoSender = senders.find((s) => s.track?.kind === 'video');
+        if (videoSender) {
+          try {
+            const params = videoSender.getParameters();
+            params.degradationPreference = 'maintain-resolution';
+            await videoSender.setParameters(params);
+          } catch {
+            // Non-fatal — worst case the encoder falls back to its default
+            // degradation behavior.
+          }
+        }
 
         const ws = new WebSocket(serverUrl);
         wsRef.current = ws;
