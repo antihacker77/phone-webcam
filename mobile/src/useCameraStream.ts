@@ -108,24 +108,7 @@ export function useCameraStream() {
         const pc = new RTCPeerConnection();
         pcRef.current = pc;
         const senders = stream.getTracks().map((track) => pc.addTrack(track, stream));
-
-        // Without this, libwebrtc's default degradation behavior can trade
-        // resolution for framerate under CPU pressure — invisible in the
-        // bitrate/FPS stats (both keep reporting normally) but visible on
-        // screen as a permanently blocky, stretched-up-from-lower-res image.
-        // VP8 has no hardware encoder on iOS, so a software encoder hitting
-        // that pressure at all is a real risk, not a hypothetical one.
         const videoSender = senders.find((s) => s.track?.kind === 'video');
-        if (videoSender) {
-          try {
-            const params = videoSender.getParameters();
-            params.degradationPreference = 'maintain-resolution';
-            await videoSender.setParameters(params);
-          } catch {
-            // Non-fatal — worst case the encoder falls back to its default
-            // degradation behavior.
-          }
-        }
 
         const ws = new WebSocket(serverUrl);
         wsRef.current = ws;
@@ -159,6 +142,33 @@ export function useCameraStream() {
             if (msg.type === 'joined') {
               const offer = await pc.createOffer({});
               await pc.setLocalDescription(offer);
+
+              // Must happen after setLocalDescription, not right after
+              // addTrack: calling setParameters() on a sender before its
+              // first SDP negotiation — when getParameters().encodings is
+              // still empty — has been observed to silently break the
+              // encoder on react-native-webrtc/iOS (ICE and DTLS complete
+              // normally, but no RTP ever leaves the device). By now the
+              // sender has real encoding parameters to modify.
+              //
+              // Without this at all, libwebrtc's default degradation
+              // behavior can trade resolution for framerate under CPU
+              // pressure — invisible in the bitrate/FPS stats (both keep
+              // reporting normally) but visible on screen as a permanently
+              // blocky, stretched-up-from-lower-res image. VP8 has no
+              // hardware encoder on iOS, so a software encoder hitting that
+              // pressure at all is a real risk, not a hypothetical one.
+              if (videoSender) {
+                try {
+                  const params = videoSender.getParameters();
+                  params.degradationPreference = 'maintain-resolution';
+                  await videoSender.setParameters(params);
+                } catch {
+                  // Non-fatal — worst case the encoder falls back to its
+                  // default degradation behavior.
+                }
+              }
+
               await waitForIceGatheringComplete(pc);
               setStatus('waiting-for-answer');
               ws.send(
