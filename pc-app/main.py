@@ -29,15 +29,19 @@ from aiortc.mediastreams import MediaStreamError
 from PIL import Image
 
 APP_VERSION = "1.0.0"
-CAM_FPS = 60
+CAM_FPS = 30
 PORT = 8765
 STATS_INTERVAL = 1.0
-PREVIEW_EVERY_N_FRAMES = 6  # ~10fps preview from a 60fps stream — plenty for a monitor view
+PREVIEW_EVERY_N_FRAMES = 3  # ~10fps preview from a 30fps stream — plenty for a monitor view
 
 # Fixed by design: no quality picker on either end (see mobile's
 # useCameraStream.ts). Both apps always negotiate exactly this, so the
 # resize below only ever fires as a safety net, not as a routine step.
-OUTPUT_SIZE = (1280, 720)
+# 1080p30 over 720p60: same rough bit budget spent on twice the pixels per
+# frame instead of twice the frames per second — on a software VP8 encoder
+# (no iOS hardware acceleration) and modest Wi-Fi bitrates, sharpness reads
+# better than extra motion smoothness for a webcam.
+OUTPUT_SIZE = (1920, 1080)
 
 COLORS = {
     "bg_deep": "#05070d",
@@ -228,11 +232,28 @@ class CameraSink:
     The OBS virtual camera backend fails to start in this process — aiortc's
     media pipeline leaves process-wide COM state that's incompatible with it.
     A fresh subprocess never inherits that state, so it works reliably there.
+
+    The pipe write to that subprocess happens on a dedicated background
+    thread, for the same reason VideoRecorder's disk write does (see its
+    docstring): stdin.write() blocks until the child's read side drains it,
+    and if whatever is consuming the virtual camera (or camera_worker itself)
+    is slow for even a moment, that block used to land directly on the
+    asyncio thread that also drives WebRTC/ICE — stalling the entire live
+    feed (and signaling) with it, while the once-a-second FPS/bitrate
+    counters stayed high enough on average to hide it.
+
+    send() hands the frame to a 1-slot queue and returns immediately. If the
+    writer thread is still busy with the previous frame, the queued one is
+    replaced rather than queued behind it — a live feed should always show
+    the most current frame it can, not fall further and further behind a
+    backlog of stale ones.
     """
 
     def __init__(self):
         self._proc: subprocess.Popen | None = None
         self._size = None
+        self._queue: "queue.Queue | None" = None
+        self._thread: threading.Thread | None = None
 
     def send(self, rgb_frame):
         h, w, _ = rgb_frame.shape
@@ -243,23 +264,53 @@ class CameraSink:
                 stdin=subprocess.PIPE,
             )
             self._size = (w, h)
+            self._queue = queue.Queue(maxsize=1)
+            self._thread = threading.Thread(
+                target=self._writer_loop, args=(self._proc, self._queue), daemon=True)
+            self._thread.start()
+        q = self._queue
         try:
-            data = rgb_frame.tobytes()
-            view = memoryview(data)
-            while view:
-                n = self._proc.stdin.write(view[:65536])
-                view = view[n:]
-        except (BrokenPipeError, OSError):
-            self._proc = None
+            q.put_nowait(rgb_frame)
+        except queue.Full:
+            try:
+                q.get_nowait()  # drop the stale frame the writer hasn't gotten to yet
+            except queue.Empty:
+                pass
+            try:
+                q.put_nowait(rgb_frame)
+            except queue.Full:
+                pass  # writer grabbed the slot between our get and put — fine, skip this frame
+
+    def _writer_loop(self, proc, frame_queue):
+        while True:
+            frame = frame_queue.get()
+            if frame is None:
+                break
+            try:
+                data = frame.tobytes()
+                view = memoryview(data)
+                while view:
+                    n = proc.stdin.write(view[:65536])
+                    view = view[n:]
+            except (BrokenPipeError, OSError):
+                if self._proc is proc:
+                    self._proc = None
+                break
 
     def close(self):
+        if self._queue is not None:
+            self._queue.put(None)
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
         if self._proc is not None:
             try:
                 self._proc.stdin.close()
             except OSError:
                 pass
             self._proc.terminate()
-            self._proc = None
+        self._proc = None
+        self._queue = None
+        self._thread = None
 
 
 class App:
@@ -560,9 +611,35 @@ class App:
 
     # --------------------------------------------------------------- polling
     def _poll(self):
+        # The reschedule at the bottom must run no matter what happens
+        # above — this loop is the only thing driving every live control
+        # (preview, stats, Disconnect button included via view state), so
+        # letting any exception skip it silently freezes the whole window.
+        try:
+            self._poll_events()
+        finally:
+            self.root.after(80, self._poll)
+
+    def _poll_events(self):
         try:
             while True:
                 kind, value = self.events.get_nowait()
+                # A single event failing to apply (e.g. a transient
+                # CustomTkinter image-handle race on rapid preview updates —
+                # "image ... doesn't exist" — has been observed under load)
+                # must not stop the remaining queued events, nor the loop
+                # itself, from being processed.
+                try:
+                    self._handle_event(kind, value)
+                except Exception:
+                    pass
+        except queue.Empty:
+            pass
+        if self.recorder.active:
+            m, s = divmod(self.recorder.elapsed_seconds(), 60)
+            self.rec_chip.configure(text=f"● REC {m:02d}:{s:02d}")
+
+    def _handle_event(self, kind, value):
                 if kind == "view":
                     self._show(self.live_view if value == "live" else self.disconnected_view)
                     if value == "live":
@@ -635,12 +712,6 @@ class App:
                     color = COLORS["danger"] if value in ("failed", "disconnected", "closed") else (
                         COLORS["amber"] if value in ("new", "connecting") else COLORS["green"])
                     self.quality_value.configure(text_color=color)
-        except queue.Empty:
-            pass
-        if self.recorder.active:
-            m, s = divmod(self.recorder.elapsed_seconds(), 60)
-            self.rec_chip.configure(text=f"● REC {m:02d}:{s:02d}")
-        self.root.after(80, self._poll)
 
     def run(self):
         self._poll()
