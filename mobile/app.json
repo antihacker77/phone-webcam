@@ -13,6 +13,9 @@
         "NSMicrophoneUsageDescription": "Only used if you enable audio streaming."
       }
     },
+    "android": {
+      "package": "com.example.phonewebcam"
+    },
     "plugins": [
       "expo-dev-client",
       "@config-plugins/react-native-webrtc",
