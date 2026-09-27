@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Phone Webcam — Web Sender (dev/test)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg-deep: #05070d;
+    --bg-panel: #0b1020;
+    --bg-panel-alt: #0e1526;
+    --line: #182036;
+    --text: #eef1f8;
+    --text-muted: #9aa3b8;
+    --text-faint: #5c6478;
+    --blue: #2f6fed;
+    --cyan: #22d3ee;
+    --green: #34d399;
+    --amber: #f5a524;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg-deep); color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    height: 100%;
+  }
+  body {
+    display: flex; justify-content: center;
+  }
+  .app {
+    width: 100%; max-width: 460px; min-height: 100vh;
+    padding: 18px; display: flex; flex-direction: column; gap: 14px;
+  }
+  h1 {
+    font-size: 15px; font-weight: 700; margin: 4px 0 0;
+  }
+  .sub { color: var(--text-faint); font-size: 11px; margin: 0 0 4px; }
+  .card {
+    background: var(--bg-panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px;
+  }
+  .field-label {
+    font-size: 10px; font-weight: 700; color: var(--text-faint);
+    letter-spacing: .04em; margin-bottom: 6px; text-transform: uppercase;
+  }
+  input[type=text] {
+    width: 100%; background: var(--bg-panel-alt); border: 1px solid var(--line);
+    border-radius: 10px; color: var(--text); font: 13px/1 Menlo, Consolas, monospace;
+    padding: 11px 12px; outline: none;
+  }
+  input[type=text]:focus { border-color: var(--blue); }
+  input[type=text]:disabled { opacity: .5; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  button {
+    font: inherit; font-weight: 700; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg-panel-alt); color: var(--text); padding: 12px; cursor: pointer;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  button.danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+  .mt { margin-top: 12px; }
+  .status-row { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+  .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.warn { background: var(--amber); }
+  .dot.err { background: var(--danger); }
+  .error-box {
+    background: #2a0f10; border: 1px solid var(--danger); color: #fca5a5;
+    border-radius: 10px; padding: 10px 12px; font-size: 12px;
+  }
+  .video-wrap {
+    position: relative; width: 100%; aspect-ratio: 9/16; max-height: 56vh;
+    background: #000; border-radius: 14px; overflow: hidden;
+  }
+  video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  .chip {
+    position: absolute; background: rgba(20,26,44,.85); border-radius: 6px;
+    padding: 4px 8px; font: 10px/1 Menlo, Consolas, monospace; font-weight: 700;
+  }
+  .chip.cyan { color: var(--cyan); }
+  .chip.top-left { top: 8px; left: 8px; }
+  .chip.top-right { top: 8px; right: 8px; }
+  .chip.bottom-left { bottom: 8px; left: 8px; }
+  .chip.bottom-right { bottom: 8px; right: 8px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--bg-panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .stat .label { font-size: 9px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; }
+  .stat .value { font: 13px/1.4 Menlo, Consolas, monospace; font-weight: 700; color: var(--text); }
+  .hint { color: var(--text-faint); font-size: 11px; }
+  a { color: var(--cyan); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div>
+    <h1>Phone Webcam — Web Sender</h1>
+    <p class="sub">Dev/test stand-in for the mobile app. Uses this browser's own camera. Works over plain HTTP because it's served from localhost / a LAN IP, which browsers treat as a secure context.</p>
+  </div>
+
+  <div class="card" id="connectCard">
+    <div class="field-label">PC address</div>
+    <input type="text" id="serverUrl" placeholder="ws://192.168.1.42:8765" autocomplete="off" autocapitalize="off" />
+    <div class="field-label mt">Passcode</div>
+    <input type="text" id="roomCode" placeholder="582490" inputmode="numeric" maxlength="6" autocomplete="off" />
+    <div class="row mt">
+      <button class="primary" id="connectBtn">Connect</button>
+      <button id="facingBtn">Flip camera</button>
+    </div>
+    <div class="mt status-row">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Idle</span>
+    </div>
+    <div class="error-box mt" id="errorBox" style="display:none"></div>
+  </div>
+
+  <div class="video-wrap" id="videoWrap" style="display:none">
+    <video id="localVideo" autoplay playsinline muted></video>
+    <div class="chip cyan top-left" id="resChip" style="display:none"></div>
+    <div class="chip top-right" id="codecChip">codec —</div>
+    <div class="chip bottom-left" id="bitrateChip">— Mbps</div>
+    <div class="chip bottom-right" id="timeChip">00:00</div>
+  </div>
+
+  <div class="stats-grid" id="statsGrid" style="display:none">
+    <div class="stat"><div class="label">ICE state</div><div class="value" id="iceStat">—</div></div>
+    <div class="stat"><div class="label">Codec</div><div class="value" id="codecStat">—</div></div>
+    <div class="stat"><div class="label">Sent</div><div class="value" id="bitrateStat">—</div></div>
+  </div>
+
+  <button class="danger" id="disconnectBtn" style="display:none">Disconnect</button>
+
+  <p class="hint">Same LAN as the PC only — no STUN/TURN, matches the mobile app's connection logic exactly (same signaling protocol, same getUserMedia constraints: 1920×1080 @ 60fps ideal).</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const serverUrlInput = $('serverUrl');
+const roomCodeInput = $('roomCode');
+const connectBtn = $('connectBtn');
+const disconnectBtn = $('disconnectBtn');
+const facingBtn = $('facingBtn');
+const statusDot = $('statusDot');
+const statusText = $('statusText');
+const errorBox = $('errorBox');
+const videoWrap = $('videoWrap');
+const localVideo = $('localVideo');
+const resChip = $('resChip');
+const codecChip = $('codecChip');
+const bitrateChip = $('bitrateChip');
+const timeChip = $('timeChip');
+const statsGrid = $('statsGrid');
+const iceStat = $('iceStat');
+const codecStat = $('codecStat');
+const bitrateStat = $('bitrateStat');
+
+let pc = null;
+let ws = null;
+let stream = null;
+let facingMode = 'user';
+let statsTimer = null;
+let elapsedTimer = null;
+let startTime = null;
+let lastBytes = null;
+let lastTime = null;
+
+try {
+  const saved = localStorage.getItem('webSenderAddress');
+  if (saved) serverUrlInput.value = saved;
+} catch (e) {}
+
+// Lets the whole thing be a single tappable link with nothing to type:
+// http://PC-IP:8080/?server=ws://PC-IP:8765&code=123456[&auto=1]
+const params = new URLSearchParams(location.search);
+const qsServer = params.get('server');
+const qsCode = params.get('code');
+if (qsServer) serverUrlInput.value = qsServer;
+if (qsCode) roomCodeInput.value = qsCode;
+
+function setStatus(text, kind) {
+  statusText.textContent = text;
+  statusDot.className = 'dot' + (kind ? ' ' + kind : '');
+}
+
+function showError(msg) {
+  errorBox.style.display = 'block';
+  errorBox.textContent = msg;
+}
+
+function clearError() {
+  errorBox.style.display = 'none';
+  errorBox.textContent = '';
+}
+
+function setActive(active) {
+  serverUrlInput.disabled = active;
+  roomCodeInput.disabled = active;
+  connectBtn.disabled = active;
+  facingBtn.disabled = active;
+  disconnectBtn.style.display = active ? 'block' : 'none';
+}
+
+function formatElapsed(sec) {
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function waitForIceGatheringComplete(pc) {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') resolve();
+    };
+  });
+}
+
+function cleanup() {
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  localVideo.srcObject = null;
+  videoWrap.style.display = 'none';
+  statsGrid.style.display = 'none';
+  resChip.style.display = 'none';
+  codecChip.textContent = 'codec —';
+  bitrateChip.textContent = '— Mbps';
+  timeChip.textContent = '00:00';
+  iceStat.textContent = '—';
+  codecStat.textContent = '—';
+  bitrateStat.textContent = '—';
+  lastBytes = null;
+  lastTime = null;
+  setActive(false);
+}
+
+async function pollStats() {
+  if (!pc) return;
+  const report = await pc.getStats();
+  let outbound = null;
+  let codecInfo = null;
+  report.forEach((stat) => {
+    if (stat.type === 'outbound-rtp' && stat.kind === 'video') outbound = stat;
+  });
+  if (outbound && outbound.codecId) {
+    const codec = report.get(outbound.codecId);
+    if (codec) codecInfo = codec.mimeType || (codec.mimeType === '' ? '' : null);
+  }
+  if (codecInfo) {
+    codecChip.textContent = 'codec ' + codecInfo.replace('video/', '');
+    codecStat.textContent = codecInfo.replace('video/', '');
+  }
+  if (outbound && typeof outbound.bytesSent === 'number') {
+    const now = performance.now();
+    if (lastBytes !== null && lastTime !== null) {
+      const deltaBytes = outbound.bytesSent - lastBytes;
+      const deltaTime = (now - lastTime) / 1000;
+      if (deltaTime > 0) {
+        const kbps = (deltaBytes * 8) / deltaTime / 1000;
+        bitrateChip.textContent = (kbps / 1000).toFixed(2) + ' Mbps';
+        bitrateStat.textContent = (kbps / 1000).toFixed(2) + ' Mbps';
+      }
+    }
+    lastBytes = outbound.bytesSent;
+    lastTime = now;
+  }
+  iceStat.textContent = pc.iceConnectionState;
+}
+
+async function connect() {
+  clearError();
+  const serverUrl = serverUrlInput.value.trim();
+  const roomCode = roomCodeInput.value.trim();
+  if (!serverUrl || !roomCode) {
+    showError('Enter both the PC address and the passcode.');
+    return;
+  }
+  try { localStorage.setItem('webSenderAddress', serverUrl); } catch (e) {}
+
+  setActive(true);
+  setStatus('Connecting…', 'warn');
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: {
+        facingMode,
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 60 },
+      },
+    });
+  } catch (err) {
+    setStatus('Camera error', 'err');
+    showError('Camera access failed: ' + (err && err.message ? err.message : err));
+    setActive(false);
+    return;
+  }
+
+  localVideo.srcObject = stream;
+  videoWrap.style.display = 'block';
+  statsGrid.style.display = 'grid';
+  const track = stream.getVideoTracks()[0];
+  const settings = track.getSettings ? track.getSettings() : {};
+  if (settings.width) {
+    resChip.style.display = 'block';
+    resChip.textContent = settings.width + '×' + settings.height + ' · ' + Math.round(settings.frameRate || 0) + 'fps';
+  }
+
+  try {
+    pc = new RTCPeerConnection();
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+
+    pc.oniceconnectionstatechange = () => {
+      iceStat.textContent = pc.iceConnectionState;
+    };
+
+    ws = new WebSocket(serverUrl);
+    let hasConnected = false;
+
+    ws.onerror = () => {
+      if (!pc) return;
+      cleanup();
+      setStatus('Error', 'err');
+      showError('Could not reach the PC app — check the address and that both are on the same Wi-Fi.');
+    };
+
+    ws.onclose = () => {
+      if (!pc) return;
+      const wasConnected = hasConnected;
+      cleanup();
+      setStatus(wasConnected ? 'Ended' : 'Error', wasConnected ? null : 'err');
+      if (!wasConnected) showError('Connection closed before it was established — the PC app may be busy or the code may be wrong.');
+    };
+
+    ws.onmessage = async (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'joined') {
+          const offer = await pc.createOffer({});
+          await pc.setLocalDescription(offer);
+          // Same as the mobile app: prefer dropping frames over dropping
+          // resolution when bandwidth/CPU is tight. Only takes effect once
+          // negotiation has started, hence after setLocalDescription.
+          const videoSender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+          if (videoSender) {
+            try {
+              const params = videoSender.getParameters();
+              params.degradationPreference = 'maintain-resolution';
+              // libwebrtc caps 1080p at ~2.5 Mbps by default — too little
+              // for 60fps; the LAN can carry far more.
+              if (params.encodings && params.encodings[0]) {
+                params.encodings[0].maxBitrate = 8000000;
+                params.encodings[0].maxFramerate = 60;
+              }
+              await videoSender.setParameters(params);
+            } catch {}
+          }
+          await waitForIceGatheringComplete(pc);
+          setStatus('Waiting for answer…', 'warn');
+          ws.send(JSON.stringify({ type: 'offer', payload: { sdp: pc.localDescription.sdp, type: pc.localDescription.type } }));
+          return;
+        }
+        if (msg.type === 'answer') {
+          await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+          hasConnected = true;
+          setStatus('Live', 'live');
+          startTime = Date.now();
+          elapsedTimer = setInterval(() => {
+            timeChip.textContent = formatElapsed(Math.floor((Date.now() - startTime) / 1000));
+          }, 1000);
+          statsTimer = setInterval(pollStats, 1000);
+          return;
+        }
+        if (msg.type === 'error') {
+          setStatus('Error', 'err');
+          showError(msg.message || 'Unknown error from PC app');
+          cleanup();
+        }
+      } catch (err) {
+        cleanup();
+        setStatus('Error', 'err');
+        showError('Signaling error: ' + (err && err.message ? err.message : err));
+      }
+    };
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'join', code: roomCode }));
+    };
+  } catch (err) {
+    cleanup();
+    setStatus('Error', 'err');
+    showError('Could not start the connection: ' + (err && err.message ? err.message : err));
+  }
+}
+
+function disconnect() {
+  cleanup();
+  setStatus('Idle');
+}
+
+connectBtn.addEventListener('click', connect);
+disconnectBtn.addEventListener('click', disconnect);
+facingBtn.addEventListener('click', () => {
+  facingMode = facingMode === 'user' ? 'environment' : 'user';
+  facingBtn.textContent = 'Flip camera (' + facingMode + ')';
+});
+
+if (params.get('auto') === '1' && qsServer && qsCode) {
+  setStatus('Auto-connecting…', 'warn');
+  connect();
+}
+</script>
+</body>
+</html>

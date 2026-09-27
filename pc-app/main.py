@@ -28,19 +28,22 @@ from aiortc import RTCPeerConnection, RTCRtpSender, RTCSessionDescription
 from aiortc.mediastreams import MediaStreamError
 from PIL import Image
 
+import stream_tuning
+
+stream_tuning.apply()
+
 APP_VERSION = "1.0.0"
-CAM_FPS = 30
+CAM_FPS = 60
 PORT = 8765
 STATS_INTERVAL = 1.0
-PREVIEW_EVERY_N_FRAMES = 3  # ~10fps preview from a 30fps stream — plenty for a monitor view
+PREVIEW_EVERY_N_FRAMES = 6  # ~10fps preview from a 60fps stream — plenty for a monitor view
 
 # Fixed by design: no quality picker on either end (see mobile's
 # useCameraStream.ts). Both apps always negotiate exactly this, so the
 # resize below only ever fires as a safety net, not as a routine step.
 # 1080p30 over 720p60: same rough bit budget spent on twice the pixels per
-# frame instead of twice the frames per second — on a software VP8 encoder
-# (no iOS hardware acceleration) and modest Wi-Fi bitrates, sharpness reads
-# better than extra motion smoothness for a webcam.
+# frame instead of twice the frames per second — at modest Wi-Fi bitrates,
+# sharpness reads better than extra motion smoothness for a webcam.
 OUTPUT_SIZE = (1920, 1080)
 
 COLORS = {
@@ -69,6 +72,39 @@ def local_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def session_log(msg: str):
+    """Appends to %LOCALAPPDATA%\Phone Webcam\session.log — the app has no
+    console, and what the phone offered/what we answered is exactly what's
+    needed to diagnose a phone that connects but sends no video."""
+    try:
+        d = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Phone Webcam")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "session.log"), "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
+    except OSError:
+        pass
+
+
+def video_codec_lines(sdp: str) -> str:
+    keep = ("m=video", "a=rtpmap", "a=fmtp")
+    return " | ".join(l for l in sdp.splitlines() if l.startswith(keep))
+
+
+def first_video_codec(sdp: str):
+    """Codec name of the first payload type on the m=video line — the one
+    the phone will actually send."""
+    lines = sdp.splitlines()
+    for l in lines:
+        if l.startswith("m=video"):
+            parts = l.split()
+            if len(parts) > 3:
+                pt = parts[3]
+                for r in lines:
+                    if r.startswith(f"a=rtpmap:{pt} "):
+                        return r.split()[1].split("/")[0].upper()
+    return None
 
 
 def make_code() -> str:
@@ -299,7 +335,17 @@ class CameraSink:
 
     def close(self):
         if self._queue is not None:
-            self._queue.put(None)
+            # Non-blocking: if the writer already died (broken pipe) the
+            # 1-slot queue may still hold a frame nobody will ever take, and
+            # a blocking put() here would hang the asyncio thread forever.
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                pass
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         if self._proc is not None:
@@ -795,10 +841,15 @@ async def report_stats(pc: RTCPeerConnection, app: App):
 
 
 FIRST_FRAME_TIMEOUT = 18.0  # ICE connectivity + first decode can legitimately take a while
+# Tighter bound while trying H264: if the phone's hardware encoder rejects
+# the negotiated parameters it sends nothing at all, and the sooner that's
+# noticed, the sooner the next connect falls back to VP8.
+H264_FIRST_FRAME_TIMEOUT = 10.0
 STALLED_TIMEOUT = 6.0  # but going silent mid-stream this long means the link actually died
 
 
-async def watch_for_stall(ws, activity: dict, connected_at: float):
+async def watch_for_stall(ws, activity: dict, connected_at: float,
+                          first_frame_timeout: float = FIRST_FRAME_TIMEOUT):
     """SDP negotiation succeeding doesn't mean media is actually flowing —
     ICE can silently fail to find a working path (firewall, AP client
     isolation, a dead Wi-Fi link) and the app would otherwise sit forever on
@@ -813,7 +864,7 @@ async def watch_for_stall(ws, activity: dict, connected_at: float):
             await asyncio.sleep(2.0)
             last = activity.get("last_frame")
             if last is None:
-                if time.monotonic() - connected_at > FIRST_FRAME_TIMEOUT:
+                if time.monotonic() - connected_at > first_frame_timeout:
                     await ws.close(code=1001, reason="no video arrived")
                     return
             elif time.monotonic() - last > STALLED_TIMEOUT:
@@ -832,6 +883,11 @@ class Signaling:
         self.code = make_code()
         self.busy = False
         self._active_ws = None
+        # Set when an H264 session connected but never produced a frame: the
+        # *next* session offers VP8 first, once. One-shot on purpose — a
+        # transient failure mustn't pin the app to software-encoded VP8
+        # (the cause of the fps collapse) until it's restarted.
+        self.prefer_vp8 = False
 
     async def force_disconnect(self):
         if self._active_ws is not None:
@@ -858,26 +914,18 @@ class Signaling:
         self.app.set_status("Phone connected, negotiating…")
         pc = RTCPeerConnection()
         video_transceiver = pc.addTransceiver("video", direction="recvonly")
-        # aiortc only ever advertises H264 at profile-level-id 42001f/42e01f
-        # (Constrained Baseline, Level 3.1 — hardcoded in
-        # aiortc/codecs/__init__.py, not something we can raise). Level 3.1's
-        # macroblock-rate budget tops out at 1280x720@30fps and can't do
-        # 1080p at all. Without this, whichever codec the phone's offer lists
-        # first wins the answer (verified: aiortc's answer mirrors the
-        # offer's codec order when no preference is set) — and iOS's
-        # hardware-accelerated H264 encoder is a very plausible thing for
-        # react-native-webrtc to list first. That would silently force the
-        # phone down to (at best) 720p30 or force a resolution drop to stay
-        # under Level 3.1's cap, regardless of what getUserMedia requested —
-        # matching exactly what was reported (good camera-side stats, bad
-        # received video) with nothing wrong on the phone's capture side.
-        # VP8 has no such SDP-level resolution/framerate ceiling, so forcing
-        # it first removes this cap entirely; H264 stays listed as a
-        # fallback only in case some device genuinely lacks VP8 support.
-        _video_caps = RTCRtpSender.getCapabilities("video").codecs
-        _preferred_codecs = [c for c in _video_caps if c.mimeType == "video/VP8"]
-        _preferred_codecs += [c for c in _video_caps if c.mimeType != "video/VP8"]
-        video_transceiver.setCodecPreferences(_preferred_codecs)
+        # H264 first so the phone uses its hardware encoder; VP8 (software-
+        # encoded on iOS, which is what made the frame rate collapse under
+        # load) only as a fallback. Needs stream_tuning's Level 5.2 patch —
+        # stock aiortc's Level 3.1 H264 can't carry 1080p.
+        caps = RTCRtpSender.getCapabilities("video").codecs
+        use_vp8, self.prefer_vp8 = self.prefer_vp8, False
+        if use_vp8:
+            prefs = sorted(caps, key=lambda c: c.mimeType.lower() != "video/vp8")
+        else:
+            prefs = stream_tuning.preferred_video_codecs(caps)
+        video_transceiver.setCodecPreferences(prefs)
+        session = {"codec": None}
         sink = CameraSink()
         stats_task = None
         watchdog_task = None
@@ -893,7 +941,9 @@ class Signaling:
             if track.kind == "video":
                 asyncio.ensure_future(consume_video(track, self.app, sink, activity))
                 stats_task = asyncio.ensure_future(report_stats(pc, self.app))
-                watchdog_task = asyncio.ensure_future(watch_for_stall(ws, activity, time.monotonic()))
+                timeout = H264_FIRST_FRAME_TIMEOUT if session["codec"] == "H264" else FIRST_FRAME_TIMEOUT
+                watchdog_task = asyncio.ensure_future(
+                    watch_for_stall(ws, activity, time.monotonic(), timeout))
                 self.app.set_view("live")
 
         try:
@@ -902,9 +952,12 @@ class Signaling:
                 msg = json.loads(raw)
                 if msg["type"] == "offer":
                     payload = msg["payload"]
+                    session_log("offer:  " + video_codec_lines(payload["sdp"]))
                     await pc.setRemoteDescription(RTCSessionDescription(sdp=payload["sdp"], type=payload["type"]))
                     answer = await pc.createAnswer()
                     await pc.setLocalDescription(answer)
+                    session["codec"] = first_video_codec(pc.localDescription.sdp)
+                    session_log("answer: " + video_codec_lines(pc.localDescription.sdp))
                     await ws.send(json.dumps({
                         "type": "answer",
                         "payload": {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type},
@@ -918,13 +971,20 @@ class Signaling:
             if watchdog_task is not None:
                 watchdog_task.cancel()
             sink.close()
+            got_video = activity["last_frame"] is not None
+            session_log(f"session end: codec={session['codec']} video={'yes' if got_video else 'NO'}")
+            fell_back = session["codec"] == "H264" and not got_video
+            if fell_back:
+                self.prefer_vp8 = True
+                session_log("H264 produced no video -> offering VP8 first for the next session")
             await pc.close()
             self.busy = False
             self._active_ws = None
             self.code = make_code()
             self.app.set_view("disconnected")
             self.app.set_connection(self.address, self.code)
-            self.app.set_status("Waiting for phone to connect…")
+            self.app.set_status("No video over H264 — tap Connect again (switching to VP8)"
+                                if fell_back else "Waiting for phone to connect…")
 
 
 async def run_server(app: App):

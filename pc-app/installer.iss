@@ -6,6 +6,9 @@
 ; Bundles the OBS Virtual Camera DirectShow filter (see
 ; vendor\obs-virtualcam\NOTICE.md) and registers it during install, so no
 ; separate camera-driver install is needed — installing this app is enough.
+; Also bundles Unity Capture (vendor\unity-capture\NOTICE.md), registered as
+; "Phone Webcam": the OBS filter outputs nothing inside OBS Studio itself,
+; so that second device is the one to pick in OBS.
 
 #define MyAppName "Phone Webcam"
 #define MyAppVersion "1.0.0"
@@ -43,6 +46,9 @@ Source: "dist\camera_worker.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "vendor\obs-virtualcam\obs-virtualcam-module64.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "vendor\obs-virtualcam\obs-virtualcam-module32.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: Is64BitInstallMode
 Source: "vendor\obs-virtualcam\NOTICE.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "vendor\unity-capture\UnityCaptureFilter64.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "vendor\unity-capture\UnityCaptureFilter32.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: Is64BitInstallMode
+Source: "vendor\unity-capture\NOTICE.md"; DestDir: "{app}"; DestName: "NOTICE-unity-capture.md"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -52,8 +58,12 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\obs-virtualcam-module64.dll"""; Flags: runhidden; StatusMsg: "Registering virtual camera..."
 Filename: "{syswow64}\regsvr32.exe"; Parameters: "/s ""{app}\obs-virtualcam-module32.dll"""; Flags: runhidden; Check: Is64BitInstallMode; StatusMsg: "Registering virtual camera (32-bit)..."
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""/i:UnityCaptureName=Phone Webcam"" ""{app}\UnityCaptureFilter64.dll"""; Flags: runhidden; StatusMsg: "Registering OBS-compatible camera..."
+Filename: "{syswow64}\regsvr32.exe"; Parameters: "/s ""/i:UnityCaptureName=Phone Webcam"" ""{app}\UnityCaptureFilter32.dll"""; Flags: runhidden; Check: Is64BitInstallMode; StatusMsg: "Registering OBS-compatible camera (32-bit)..."
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\obs-virtualcam-module64.dll"""; Flags: runhidden; RunOnceId: "UnregVirtualCam64"
 Filename: "{syswow64}\regsvr32.exe"; Parameters: "/u /s ""{app}\obs-virtualcam-module32.dll"""; Flags: runhidden; Check: Is64BitInstallMode; RunOnceId: "UnregVirtualCam32"
+Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\UnityCaptureFilter64.dll"""; Flags: runhidden; RunOnceId: "UnregUnityCapture64"
+Filename: "{syswow64}\regsvr32.exe"; Parameters: "/u /s ""{app}\UnityCaptureFilter32.dll"""; Flags: runhidden; Check: Is64BitInstallMode; RunOnceId: "UnregUnityCapture32"
