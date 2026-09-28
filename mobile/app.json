@@ -19,7 +19,8 @@
     "plugins": [
       "expo-dev-client",
       "@config-plugins/react-native-webrtc",
-      "expo-camera"
+      "expo-camera",
+      "./plugins/withCleartextTraffic"
     ]
   }
 }
