@@ -12,6 +12,7 @@ import json
 import os
 import queue
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -105,6 +106,22 @@ def first_video_codec(sdp: str):
                     if r.startswith(f"a=rtpmap:{pt} "):
                         return r.split()[1].split("/")[0].upper()
     return None
+
+
+# H264 Level 4.0 (profile-level-id ...28) is the lowest that carries 1080p30.
+MIN_H264_LEVEL_FOR_1080P30 = 0x28
+
+
+def phone_h264_level(sdp: str) -> int:
+    """Highest H264 level the phone's offer advertises (0 if none). The
+    offer lists what the phone's *encoder* supports: iPhones offer Level 5.2
+    (...34), while e.g. an Android phone whose hardware encoder tops out at
+    Level 3.1 (...1f) offers only that — and pushed to 1080p anyway it
+    delivered 5-7 fps regardless of lighting, with zero loss."""
+    best = 0
+    for m in re.finditer(r"profile-level-id=([0-9a-fA-F]{6})", sdp):
+        best = max(best, int(m.group(1)[4:], 16))
+    return best
 
 
 def make_code() -> str:
@@ -940,13 +957,9 @@ class Signaling:
         # encoded on iOS, which is what made the frame rate collapse under
         # load) only as a fallback. Needs stream_tuning's Level 5.2 patch —
         # stock aiortc's Level 3.1 H264 can't carry 1080p.
-        caps = RTCRtpSender.getCapabilities("video").codecs
+        # Final preferences are set once the offer arrives (see below): which
+        # codec to ask for depends on what the phone's encoder can do.
         use_vp8, self.prefer_vp8 = self.prefer_vp8, False
-        if use_vp8:
-            prefs = sorted(caps, key=lambda c: c.mimeType.lower() != "video/vp8")
-        else:
-            prefs = stream_tuning.preferred_video_codecs(caps)
-        video_transceiver.setCodecPreferences(prefs)
         session = {"codec": None}
         sink = CameraSink()
         stats_task = None
@@ -976,6 +989,18 @@ class Signaling:
                 if msg["type"] == "offer":
                     payload = msg["payload"]
                     session_log("offer:  " + video_codec_lines(payload["sdp"]))
+                    # H264 only when the phone's own encoder claims a level
+                    # that can carry 1080p30; otherwise VP8 (libvpx, or a
+                    # hardware VP8 encoder where the phone has one).
+                    level = phone_h264_level(payload["sdp"])
+                    caps = RTCRtpSender.getCapabilities("video").codecs
+                    if use_vp8 or level < MIN_H264_LEVEL_FOR_1080P30:
+                        prefs = sorted(caps, key=lambda c: c.mimeType.lower() != "video/vp8")
+                    else:
+                        prefs = stream_tuning.preferred_video_codecs(caps)
+                    video_transceiver.setCodecPreferences(prefs)
+                    session_log(f"phone H264 level=0x{level:02x} one_shot_vp8={use_vp8} -> "
+                                f"{prefs[0].mimeType}")
                     await pc.setRemoteDescription(RTCSessionDescription(sdp=payload["sdp"], type=payload["type"]))
                     answer = await pc.createAnswer()
                     await pc.setLocalDescription(answer)
