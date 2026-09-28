@@ -152,3 +152,26 @@ def apply():
     _patch_h264_levels()
     _receiver.JitterBuffer = _jitter_buffer_factory
     RemoteBitrateEstimator.add = _remb_add_with_floor
+
+
+# Per-session diagnostics only (read by main.py's once-a-second log line) —
+# no effect on how the stream is received.
+counters = {"pli": 0, "stale_drops": 0}
+
+
+def reset_counters():
+    for k in counters:
+        counters[k] = 0
+
+
+_uncounted_add = _VideoJitterBuffer.add
+
+
+def _counting_add(self, packet):
+    pli_flag, frame = _uncounted_add(self, packet)
+    if pli_flag:
+        counters["pli"] += 1
+    return pli_flag, frame
+
+
+_VideoJitterBuffer.add = _counting_add

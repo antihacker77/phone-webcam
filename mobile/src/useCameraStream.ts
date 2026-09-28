@@ -17,17 +17,16 @@ export type Status =
 // Fixed by design: no per-user quality picker on either end. Both apps
 // negotiate exactly this, so there's never a source/output-size mismatch
 // for the PC side to have to reconcile (see FrameTransformer in main.py).
-// 1080p60: the PC app now negotiates H264 (Level 5.2), which iOS encodes in
-// hardware — the CPU-starved software VP8 encoder that forced this down to
-// 30fps earlier is out of the picture (VP8 is only a fallback now).
-// degradationPreference below still pins resolution explicitly.
+// 1080p30 rather than 720p60: VP8 has no hardware encoder on iOS, so at
+// 60fps the software encoder was CPU-starved enough that libwebrtc's
+// automatic degradation silently rendered at a lower internal resolution
+// (stretched back up for display) even when reported bitrate looked fine —
+// showing up as persistent blockiness no bitrate fixed. 30fps halves the
+// encoder's per-second workload, leaving headroom for full-resolution
+// 1080p instead. degradationPreference below backs this up explicitly.
 const FIXED_WIDTH = 1920;
 const FIXED_HEIGHT = 1080;
-const FIXED_FRAME_RATE = 60;
-// libwebrtc's default max for 1080p is ~2.5 Mbps — fine for 30fps, visibly
-// soft at 60. A LAN carries far more; the phone's own congestion control
-// still backs off if the Wi-Fi can't.
-const MAX_BITRATE_BPS = 8_000_000;
+const FIXED_FRAME_RATE = 30;
 
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -163,10 +162,6 @@ export function useCameraStream() {
                 try {
                   const params = videoSender.getParameters();
                   params.degradationPreference = 'maintain-resolution';
-                  if (params.encodings && params.encodings[0]) {
-                    params.encodings[0].maxBitrate = MAX_BITRATE_BPS;
-                    params.encodings[0].maxFramerate = FIXED_FRAME_RATE;
-                  }
                   await videoSender.setParameters(params);
                 } catch {
                   // Non-fatal — worst case the encoder falls back to its

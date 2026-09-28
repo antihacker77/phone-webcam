@@ -1,4 +1,4 @@
-name: Build unsigned Android APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -32,11 +32,15 @@ jobs:
       - name: Generate native Android project
         run: npx expo prebuild -p android
 
-      - name: Build (debug, auto-signed with the debug keystore)
+      # Release, not debug: a debug build doesn't embed the JS bundle and
+      # tries to load it from a Metro dev server on a PC, so on its own it
+      # never gets past a red error screen. Expo's prebuilt release config
+      # signs with the debug keystore, so the APK still installs directly.
+      - name: Build (release, signed with the debug keystore)
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
 
       - name: Locate APK
         id: apk
@@ -52,5 +56,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
+          name: app-release-apk
           path: mobile/phone-webcam.apk

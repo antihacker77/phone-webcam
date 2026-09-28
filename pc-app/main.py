@@ -33,10 +33,10 @@ import stream_tuning
 stream_tuning.apply()
 
 APP_VERSION = "1.0.0"
-CAM_FPS = 60
+CAM_FPS = 30
 PORT = 8765
 STATS_INTERVAL = 1.0
-PREVIEW_EVERY_N_FRAMES = 6  # ~10fps preview from a 60fps stream — plenty for a monitor view
+PREVIEW_EVERY_N_FRAMES = 3  # ~10fps preview from a 30fps stream — plenty for a monitor view
 
 # Fixed by design: no quality picker on either end (see mobile's
 # useCameraStream.ts). Both apps always negotiate exactly this, so the
@@ -773,6 +773,7 @@ async def consume_video(track, app: App, sink: CameraSink, activity: dict):
         while True:
             frame = await track.recv()
             activity["last_frame"] = time.monotonic()
+            activity["frames"] = activity.get("frames", 0) + 1
             img = app.transformer.apply(frame.to_ndarray(format="rgb24"))
             sink.send(img)
             app.recorder.write(img)
@@ -796,7 +797,7 @@ async def consume_video(track, app: App, sink: CameraSink, activity: dict):
         sink.close()
 
 
-async def report_stats(pc: RTCPeerConnection, app: App):
+async def report_stats(pc: RTCPeerConnection, app: App, activity: dict):
     # aiortc's inbound-rtp stats don't carry bytesReceived (unlike the W3C
     # spec browsers implement) — bitrate is instead read from the transport
     # stat, which aggregates all bytes (RTP + RTCP) on our one video
@@ -809,7 +810,11 @@ async def report_stats(pc: RTCPeerConnection, app: App):
     last_lost = None
     try:
         while True:
+            slept_at = time.monotonic()
             await asyncio.sleep(STATS_INTERVAL)
+            # How late the event loop woke us: a saturated loop (RTP handling
+            # + frame conversion share it) shows up here before anything else.
+            loop_lag_ms = (time.monotonic() - slept_at - STATS_INTERVAL) * 1000
             report = await pc.getStats()
             bitrate_kbps = None
             loss_pct = None
@@ -836,6 +841,13 @@ async def report_stats(pc: RTCPeerConnection, app: App):
                     if received is not None and lost is not None:
                         last_received, last_lost = received, lost
             app.push_stats(bitrate_kbps, loss_pct, quality_label(loss_pct) if loss_pct is not None else None)
+            frames = activity.get("frames", 0)
+            fps = frames - activity.get("frames_logged", 0)
+            activity["frames_logged"] = frames
+            session_log(
+                f"  fps={fps} kbps={bitrate_kbps or 0:.0f} loss={loss_pct or 0:.1f}% "
+                f"pli={stream_tuning.counters['pli']} stale_drops={stream_tuning.counters['stale_drops']} "
+                f"loop_lag={loop_lag_ms:.0f}ms ice={pc.connectionState}")
     except asyncio.CancelledError:
         pass
 
@@ -865,9 +877,11 @@ async def watch_for_stall(ws, activity: dict, connected_at: float,
             last = activity.get("last_frame")
             if last is None:
                 if time.monotonic() - connected_at > first_frame_timeout:
+                    session_log("watchdog: no video arrived -> closing")
                     await ws.close(code=1001, reason="no video arrived")
                     return
             elif time.monotonic() - last > STALLED_TIMEOUT:
+                session_log(f"watchdog: no frame for {time.monotonic() - last:.1f}s -> closing")
                 await ws.close(code=1001, reason="video stalled")
                 return
     except asyncio.CancelledError:
@@ -909,8 +923,16 @@ class Signaling:
             await ws.close()
             return
 
+        if self.busy:
+            # Re-checked here: several sockets can pass the check at the top
+            # while each is still awaiting its join message (phone retrying),
+            # and would then run parallel sessions against the same camera.
+            await ws.close(code=1013, reason="busy")
+            return
         self.busy = True
         self._active_ws = ws
+        stream_tuning.reset_counters()
+        session_log(f"session start: {ws.remote_address}")
         self.app.set_status("Phone connected, negotiating…")
         pc = RTCPeerConnection()
         video_transceiver = pc.addTransceiver("video", direction="recvonly")
@@ -934,13 +956,14 @@ class Signaling:
         @pc.on("connectionstatechange")
         async def on_connection_state_change():
             self.app.push_ice_state(pc.connectionState)
+            session_log(f"  ice -> {pc.connectionState}")
 
         @pc.on("track")
         def on_track(track):
             nonlocal stats_task, watchdog_task
             if track.kind == "video":
                 asyncio.ensure_future(consume_video(track, self.app, sink, activity))
-                stats_task = asyncio.ensure_future(report_stats(pc, self.app))
+                stats_task = asyncio.ensure_future(report_stats(pc, self.app, activity))
                 timeout = H264_FIRST_FRAME_TIMEOUT if session["codec"] == "H264" else FIRST_FRAME_TIMEOUT
                 watchdog_task = asyncio.ensure_future(
                     watch_for_stall(ws, activity, time.monotonic(), timeout))
@@ -972,7 +995,9 @@ class Signaling:
                 watchdog_task.cancel()
             sink.close()
             got_video = activity["last_frame"] is not None
-            session_log(f"session end: codec={session['codec']} video={'yes' if got_video else 'NO'}")
+            session_log(
+                f"session end: codec={session['codec']} video={'yes' if got_video else 'NO'} "
+                f"frames={activity.get('frames', 0)} ws_close={ws.close_code} {ws.close_reason or ''}")
             fell_back = session["codec"] == "H264" and not got_video
             if fell_back:
                 self.prefer_vp8 = True

@@ -132,7 +132,7 @@
 
   <button class="danger" id="disconnectBtn" style="display:none">Disconnect</button>
 
-  <p class="hint">Same LAN as the PC only — no STUN/TURN, matches the mobile app's connection logic exactly (same signaling protocol, same getUserMedia constraints: 1920×1080 @ 60fps ideal).</p>
+  <p class="hint">Same LAN as the PC only — no STUN/TURN, matches the mobile app's connection logic exactly (same signaling protocol, same getUserMedia constraints: 1920×1080 @ 30fps ideal).</p>
 </div>
 
 <script>
@@ -290,7 +290,7 @@ async function connect() {
         facingMode,
         width: { ideal: 1920 },
         height: { ideal: 1080 },
-        frameRate: { ideal: 60 },
+        frameRate: { ideal: 30 },
       },
     });
   } catch (err) {
@@ -350,12 +350,6 @@ async function connect() {
             try {
               const params = videoSender.getParameters();
               params.degradationPreference = 'maintain-resolution';
-              // libwebrtc caps 1080p at ~2.5 Mbps by default — too little
-              // for 60fps; the LAN can carry far more.
-              if (params.encodings && params.encodings[0]) {
-                params.encodings[0].maxBitrate = 8000000;
-                params.encodings[0].maxFramerate = 60;
-              }
               await videoSender.setParameters(params);
             } catch {}
           }
