@@ -34,10 +34,15 @@ import stream_tuning
 stream_tuning.apply()
 
 APP_VERSION = "1.0.0"
-CAM_FPS = 30
+# The virtual camera advertises 60fps: an iPhone on the 60fps build fills
+# it, and a 30fps phone (Android, or the 30fps iPhone build) just has each
+# frame shown twice. Recording uses the measured rate instead (see
+# _toggle_recording) — a fixed rate there would make a 30fps recording of a
+# 60fps stream play back at half speed.
+CAM_FPS = 60
 PORT = 8765
 STATS_INTERVAL = 1.0
-PREVIEW_EVERY_N_FRAMES = 3  # ~10fps preview from a 30fps stream — plenty for a monitor view
+PREVIEW_EVERY_N_FRAMES = 6  # ~10-5fps preview from a 60-30fps stream — plenty for a monitor view
 
 # Fixed by design: no quality picker on either end (see mobile's
 # useCameraStream.ts). Both apps always negotiate exactly this, so the
@@ -384,6 +389,7 @@ class App:
         self.transformer = FrameTransformer()
         self.recorder = VideoRecorder()
         self.last_frame_size: tuple | None = None
+        self.last_fps: float | None = None
 
         # Set by run_server once the event loop and signaling object exist,
         # so button handlers on the Tk thread can schedule coroutines on it.
@@ -631,7 +637,7 @@ class App:
             return
         w, h = self.last_frame_size
         try:
-            self.recorder.start(w, h, CAM_FPS)
+            self.recorder.start(w, h, 60 if (self.last_fps or 0) > 45 else 30)
         except RuntimeError:
             return
         self.record_btn.configure(text="■  Stop Recording", fg_color=COLORS["danger_dark"],
@@ -745,6 +751,7 @@ class App:
                     w, h = value
                     self.res_chip.configure(text=human_resolution(w, h))
                 elif kind == "fps":
+                    self.last_fps = value
                     self.fps_chip.configure(text=f"{value:.0f} FPS")
                 elif kind == "stats":
                     bitrate_kbps, loss_pct, quality = value
