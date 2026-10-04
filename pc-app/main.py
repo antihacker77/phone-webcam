@@ -933,6 +933,7 @@ class Signaling:
 
     async def handler(self, ws):
         if self.busy:
+            session_log(f"rejected {ws.remote_address}: busy")
             await ws.close(code=1013, reason="busy")
             return
 
@@ -1034,7 +1035,13 @@ class Signaling:
             if fell_back:
                 self.prefer_vp8 = True
                 session_log("H264 produced no video -> offering VP8 first for the next session")
-            await pc.close()
+            # Bounded: if closing hangs (aiortc joins its decoder thread
+            # without a timeout), the app would otherwise stay "busy" and
+            # silently turn the phone away on every reconnect until restarted.
+            try:
+                await asyncio.wait_for(pc.close(), timeout=5.0)
+            except Exception as e:
+                session_log(f"pc.close() did not finish cleanly: {e!r}")
             self.busy = False
             self._active_ws = None
             self.code = make_code()
